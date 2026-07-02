@@ -26,6 +26,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Enable Corepack
+        run: |
+          corepack enable
+
       - name: Install Dependencies
         run: pnpm install --no-frozen-lockfile
 
@@ -48,7 +52,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.CLOUDWAYS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p ${{ secrets.CLOUDWAYS_PORT }} -H ${{ secrets.CLOUDWAYS_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H -p ${{ secrets.CLOUDWAYS_PORT }} ${{ secrets.CLOUDWAYS_HOST }} >> ~/.ssh/known_hosts
 
       - name: Deploy Build to Cloudways
         env:
@@ -56,8 +60,31 @@ jobs:
           REMOTE_HOST: ${{ secrets.CLOUDWAYS_HOST }}
           REMOTE_PORT: ${{ secrets.CLOUDWAYS_PORT }}
           REMOTE_PATH: /home/master/applications/rxtdnqswpd/public_html
+
         run: |
-          rsync -az --delete \
+          echo "Cleaning previous build..."
+
+          ssh -i ~/.ssh/id_ed25519 \
+            -p ${REMOTE_PORT} \
+            -o StrictHostKeyChecking=no \
+            ${REMOTE_USER}@${REMOTE_HOST} << EOF
+
+            cd ${REMOTE_PATH}
+
+            rm -rf assets
+            rm -f index.html
+            rm -f favicon.svg
+            rm -f manifest.json
+
+          EOF
+
+          echo "Uploading new build..."
+
+          rsync -rz \
+            --omit-dir-times \
+            --no-perms \
+            --no-owner \
+            --no-group \
             --exclude=".htaccess" \
             -e "ssh -i ~/.ssh/id_ed25519 -p ${REMOTE_PORT}" \
             dist/public/ \
