@@ -24,7 +24,9 @@ At the start of every session in this repository:
 - Pull from the current branch's upstream before coding when it is safe to do so.
 - Use `main` only when starting fresh, when the current branch is `main`, or when the user explicitly asks.
 - Never pull from or push to `main` without first confirming with the developer and clearly saying the action targets `main`.
+- Read the project knowledge base in `claude_docs/` for architecture, auth/session, API layer, and case-scoping context before non-trivial work.
 - Classify the task as small, medium, or risky before choosing how much planning and model power to use.
+- After completing any feature, enhancement, bug fix, refactor, or other notable change, append an entry to `CHANGELOG_AI.md` (newest at top) before finishing the task.
 - If the task is unclear, inspect the relevant files first and ask only when a safe assumption is not possible.
 - If the task is risky, security-sensitive, auth-sensitive, deployment-sensitive, or touches patient data exposure, give a CTO-style plan first and wait for approval.
 
@@ -145,3 +147,4 @@ When finished, provide:
 - Build/test results
 - Risks or follow-up notes
 - Git branch, commit, push, or PR details when applicable
+- A new `CHANGELOG_AI.md` entry documenting the change (required for any code change)
