@@ -1,0 +1,36 @@
+name: Deploy Staging to Cloudways
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - run: pnpm install --no-frozen-lockfile
+
+      - run: pnpm run build
+
+      - name: Deploy dist/public
+        uses: burnett01/rsync-deployments@7.0.2
+        with:
+          switches: -avzr --delete
+          path: dist/public/
+          remote_path: /home/master_xxxxx/applications/rxtdnqswpd/public_html/
+          remote_host: ${{ secrets.CLOUDWAYS_HOST }}
+          remote_user: ${{ secrets.CLOUDWAYS_USER }}
+          remote_key: ${{ secrets.CLOUDWAYS_SSH_KEY }}
