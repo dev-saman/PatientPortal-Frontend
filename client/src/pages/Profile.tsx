@@ -266,9 +266,9 @@ export default function Profile() {
         </Card>
 
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-          <TabsList className="grid w-full grid-cols-1">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="general">General</TabsTrigger>
-            {/* <TabsTrigger value="proxy">Proxy Access</TabsTrigger> */}
+            <TabsTrigger value="proxy">Proxy Access</TabsTrigger>
             {/* HIDDEN: Notifications, Security tabs hidden per UI requirements */}
             {/* <TabsTrigger value="notifications">Notifications</TabsTrigger>
             <TabsTrigger value="security">Security</TabsTrigger> */}
