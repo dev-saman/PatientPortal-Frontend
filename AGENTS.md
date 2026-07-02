@@ -26,7 +26,7 @@ At the start of every session in this repository:
 - Never pull from or push to `main` without first confirming with the developer and clearly saying the action targets `main`.
 - Read the project knowledge base in `claude_docs/` for architecture, auth/session, API layer, and case-scoping context before non-trivial work.
 - Classify the task as small, medium, or risky before choosing how much planning and model power to use.
-- After completing any feature, enhancement, bug fix, refactor, or other notable change, append an entry to `CHANGELOG_AI.md` (newest at top) before finishing the task.
+- After completing any feature, enhancement, bug fix, refactor, or other notable change that you make, append an entry to `CHANGELOG_AI.md` (newest at top) before finishing the task. Do not auto-log the developer's own manual edits, but when the developer explicitly asks, read `git log`/`git diff` and add changelog entries for those human-made changes too.
 - If the task is unclear, inspect the relevant files first and ask only when a safe assumption is not possible.
 - If the task is risky, security-sensitive, auth-sensitive, deployment-sensitive, or touches patient data exposure, give a CTO-style plan first and wait for approval.
 

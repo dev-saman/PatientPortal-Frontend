@@ -10,12 +10,22 @@ and notable configuration/docs changes.
 - For each entry note: **What** changed, **Files/areas** touched, and any
   **Auth / case-scoping / patient-data** considerations (mirrors the
   "Output Required" section of `AGENTS.md`).
+- **Scope:** AI-made changes are logged automatically. The developer's own
+  manual changes are logged only when the developer explicitly asks the AI to
+  record them (the AI reads `git log`/`git diff` to do so).
 - This log is maintained by the AI assistant per the standing project
   convention; it does not replace `git log`.
 
 ---
 
 ## 2026-07-02
+
+### Set CHANGELOG scope to "AI + manual-on-request"
+- **What:** Clarified that this log records AI-made changes automatically, and
+  the developer's manual changes only when explicitly requested.
+- **Files/areas:** `CHANGELOG_AI.md` (Conventions), `AGENTS.md`
+  (CHANGELOG rule).
+- **Auth / case-scoping / patient-data:** None — documentation/process only.
 
 ### Added AI knowledge base and CHANGELOG_AI convention
 - **What:** Established a project knowledge base under `claude_docs/` (overview,
