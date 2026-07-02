@@ -108,8 +108,12 @@ Always identify:
 - Risk of exposing sensitive patient or staff data
 
 ## Task Handling
-- Small tasks: make the minimal safe change directly.
-- Medium tasks: give a short plan, then implement.
+- Plan-first is the default: for any feature, enhancement, bug fix, or refactor, first analyze the codebase and current implementation, then present the implementation plan/approach and STOP. Do not edit any files until the developer explicitly approves the plan.
+- Only truly trivial edits dictated verbatim by the developer (e.g. a specific typo or wording fix) may skip the plan step.
+- Make changes to local files only. Never run git add/commit/push, and never ask or offer to, unless the developer explicitly requests it.
+- After completing the work, provide a summary of every modified, added, renamed, and deleted file with a brief per-file explanation. The developer reviews and handles commit/push manually.
+- Small tasks: still present the plan (it can be brief), wait for approval, then make the minimal safe change.
+- Medium tasks: give a plan, wait for approval, then implement.
 - Risky tasks: give a CTO-style plan first and wait for approval.
 - UI tasks: preserve existing design patterns, responsive behavior, loading states, empty states, and error handling.
 - API tasks: identify endpoints, request data, response data, auth requirements, and failure states before editing.
