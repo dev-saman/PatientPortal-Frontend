@@ -4,7 +4,6 @@ import {
   isEncodedEmailLink,
   decodeEmailLinkParams,
   storeEmailLinkData,
-  clearEmailLinkData,
 } from "@/lib/decodeEmailLink";
 import { useAuth } from "@/contexts/AuthContext";
 import Apis from "@/lib/Apis";
@@ -69,8 +68,6 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
         const isEmailSource = decoded.source?.toLowerCase() === "email";
         const decodedCaseId = String(decoded.case_id || "").trim();
         const currentCaseIdAtEntry = getActiveCaseId();
-        // Normalise flag once here so every branch below reads the same value.
-        const decodedFlag = decoded.flag.trim().toLowerCase();
 
         // Persist the URL case_id immediately so the post-login flow can
         // apply it even if the primary pending-redirect mechanism is bypassed.
@@ -179,42 +176,6 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // ── USER_EXISTS GATE ─────────────────────────────────────────────────
-        // The flag baked into the link by the backend is the authoritative
-        // signal. Evaluate it BEFORE any source-based branching or async API
-        // calls so that no later logic (verifyMagicLink response, stale
-        // sessionStorage, or fallback defaults) can override the destination.
-        if (decodedFlag === "user_exists") {
-          if (hasToken || isAuthenticated) {
-            // Already logged in as the right patient — go straight to the form.
-            try {
-              await navigateToFormWithCaseSync();
-            } catch (error) {
-              toast({
-                title: "Unable to Switch Case",
-                description: getApiErrorMessage(error),
-                variant: "destructive",
-              });
-              setLocation("/");
-            }
-            return;
-          }
-
-          // Not logged in — send to /login.
-          // Clear any stale no_user session data first so ResetPassword cannot
-          // show a ghost "Create Password" screen if the user navigates back.
-          clearEmailLinkData();
-          storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
-          sessionStorage.setItem(
-            "ahcs_user_exists_form_redirect",
-            JSON.stringify({ ...decoded, form: validFormId })
-          );
-          setLocation("/login");
-          return;
-        }
-        // ────────────────────────────────────────────────────────────────────
-        // Everything below this point is the no_user path.
-
         if (isSmsSource) {
           if (hasToken || isAuthenticated) {
             try {
@@ -260,12 +221,7 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // ── NO_USER PATH ─────────────────────────────────────────────────────
-        // user_exists was already handled above and returned. All remaining
-        // branches lead to /reset-password (new patient creates a password).
-
         if (isEmailSource) {
-          // Logged-in patient reusing a no_user link — account already exists.
           if (hasToken || isAuthenticated) {
             try {
               await navigateToFormWithCaseSync();
@@ -286,34 +242,64 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
           }
 
           storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
-          storeEmailLinkData({ ...decoded, form: validFormId });
-          setLocation("/reset-password");
+
+          // Trust the flag baked into the email link by the backend. A live
+          // verifyMagicLink call was previously used here but its response can
+          // disagree with the encoded flag (different backend paths), causing
+          // user_exists links to wrongly land on /reset-password.
+          if (decoded.flag === "user_exists") {
+            sessionStorage.setItem("ahcs_user_exists_form_redirect", JSON.stringify({ ...decoded, form: validFormId }));
+            setLocation("/login");
+          } else {
+            storeEmailLinkData({ ...decoded, form: validFormId });
+            setLocation("/reset-password");
+          }
+
           return;
         }
 
-        // Default / unknown source — no_user path.
-        // If this patient is already logged in (the token's patient_id matches
-        // the link — the wrong-account guard above already bounced a different
-        // patient), the account now exists, e.g. the link is being reused after
-        // registration. Skip Create Password and go to the form.
-        const isAlreadyRegisteredPatient =
-          (hasToken || isAuthenticated) && patientIdMatchesToken(decoded.patient_id);
-
-        if (isAlreadyRegisteredPatient) {
-          try {
-            await navigateToFormWithCaseSync();
-          } catch (error) {
-            toast({
-              title: "Unable to Switch Case",
-              description: getApiErrorMessage(error),
-              variant: "destructive",
-            });
-            setLocation("/");
+        if (decoded.flag === "user_exists") {
+          if (hasToken || isAuthenticated) {
+            try {
+              await navigateToFormWithCaseSync();
+            } catch (error) {
+              toast({
+                title: "Unable to Switch Case",
+                description: getApiErrorMessage(error),
+                variant: "destructive",
+              });
+              setLocation("/");
+            }
+          } else {
+            storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
+            sessionStorage.setItem("ahcs_user_exists_form_redirect", JSON.stringify({ ...decoded, form: validFormId }));
+            setLocation("/login");
           }
         } else {
-          storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
-          storeEmailLinkData({ ...decoded, form: validFormId });
-          setLocation("/reset-password");
+          // no_user flag. If this patient is already logged in (the token's
+          // patient_id matches the link — the wrong-account guard above already
+          // bounced a different patient), the account now exists, e.g. the link
+          // is being reused after registration. Skip Create Password and go to
+          // the form like the user_exists flow.
+          const isAlreadyRegisteredPatient =
+            (hasToken || isAuthenticated) && patientIdMatchesToken(decoded.patient_id);
+
+          if (isAlreadyRegisteredPatient) {
+            try {
+              await navigateToFormWithCaseSync();
+            } catch (error) {
+              toast({
+                title: "Unable to Switch Case",
+                description: getApiErrorMessage(error),
+                variant: "destructive",
+              });
+              setLocation("/");
+            }
+          } else {
+            storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
+            storeEmailLinkData({ ...decoded, form: validFormId });
+            setLocation("/reset-password");
+          }
         }
       } finally {
         setIsHandlingMagicLink(false);
