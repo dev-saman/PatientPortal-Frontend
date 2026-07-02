@@ -62,7 +62,7 @@ export default function Login() {
           </div>
           <CardTitle className="text-2xl font-bold text-primary">AdvantageHCS</CardTitle>
           <CardDescription>
-            Secure Patient Portal Access Test Deploy
+            Secure Patient Portal Access
           </CardDescription>
         </CardHeader>
         <CardContent>
