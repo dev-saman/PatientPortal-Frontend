@@ -471,9 +471,9 @@ export default function Appointments() {
                           {/* <Button className="bg-primary hover:bg-primary/90">
                             eCheck-In
                           </Button> */}
-                          {/* <Button variant="outline" onClick={() => openRescheduleModal(appointment)}>
+                          <Button variant="outline" onClick={() => openRescheduleModal(appointment)}>
                             Reschedule
-                          </Button> */}
+                          </Button>
                           {/* <Button variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10">
                             Cancel
                           </Button> */}
