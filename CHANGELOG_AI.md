@@ -20,6 +20,23 @@ and notable configuration/docs changes.
 
 ## 2026-07-02
 
+### Reconciled AGENTS.md Git Workflow with local-only rules and real deploy
+- **What:** Rewrote the "Git Workflow" section: developer handles all Git;
+  the AI runs read-only Git only and never commits/pushes/branches unless
+  explicitly asked. Corrected stale deploy facts (`staging`→Cloudways via
+  `deploy-staging.yml`, not `main`→`deploy.yml`).
+- **Files/areas:** `AGENTS.md`.
+- **Auth / case-scoping / patient-data:** None — process/guidance only.
+
+### Added Context Intake and UI Consistency checklists to AGENTS.md
+- **What:** Added a "Context Intake Checklist" (read memory/docs → analyze →
+  review code + Git status → plan → wait for approval → implement locally →
+  update CHANGELOG_AI.md → summarize files; never commit/push unless asked) and
+  a "UI Consistency Checklist" (design system, tokens-not-hex, typography,
+  spacing, components, responsiveness, dark mode, accessibility, conventions).
+- **Files/areas:** `AGENTS.md`.
+- **Auth / case-scoping / patient-data:** None — process/guidance only.
+
 ### Set CHANGELOG scope to "AI + manual-on-request"
 - **What:** Clarified that this log records AI-made changes automatically, and
   the developer's manual changes only when explicitly requested.
