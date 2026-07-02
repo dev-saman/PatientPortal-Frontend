@@ -1,0 +1,62 @@
+name: Auto Deploy Patient Portal
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, x64, production]
+
+    steps:
+      - name: Pull latest code
+        run: |
+          sudo -n chown -R akmal:www-data /var/www/html/patient-portal
+          sudo -n chmod -R 775 /var/www/html/patient-portal
+          sudo -n chmod -R ug+rwX /var/www/html/patient-portal/.git
+          sudo -n find /var/www/html/patient-portal -type d -exec chmod g+s {} \;
+          sudo -n rm -f /var/www/html/patient-portal/.git/index.lock /var/www/html/patient-portal/.git/FETCH_HEAD
+
+          sudo -n -u akmal bash -lc '
+            cd /var/www/html/patient-portal &&
+            git fetch origin main &&
+            git reset --hard origin/main &&
+            git clean -fd
+          '
+
+      - name: Install dependencies
+        run: |
+          sudo -n chown -R akmal:www-data /var/www/html/patient-portal/node_modules /var/www/html/patient-portal/client/node_modules 2>/dev/null || true
+          sudo -n chmod -R ug+rwX /var/www/html/patient-portal/node_modules /var/www/html/patient-portal/client/node_modules 2>/dev/null || true
+
+          sudo -n -u akmal bash -lc '
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            cd /var/www/html/patient-portal/client &&
+            node -v &&
+            pnpm install --no-frozen-lockfile --prefer-offline &&
+            find ../node_modules ./node_modules -path "*/esbuild/bin/esbuild" -exec chmod +x {} \; 2>/dev/null || true
+          '
+
+      - name: Build project
+        run: |
+          sudo -n -u akmal bash -lc '
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            cd /var/www/html/patient-portal/client &&
+            node -v &&
+            pnpm run build
+          '
+
+      - name: Fix permissions
+        run: |
+          sudo -n chown -R akmal:www-data /var/www/html/patient-portal/dist
+          sudo -n chmod -R 775 /var/www/html/patient-portal/dist
+          sudo -n chmod -R ug+rwX /var/www/html/patient-portal/.git
+
+      - name: Restart Apache
+        run: |
+          sudo -n systemctl restart apache2
