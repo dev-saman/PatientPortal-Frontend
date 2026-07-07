@@ -27,6 +27,7 @@ import Apis from "@/lib/Apis";
 import { getApiErrorMessage } from "@/lib/apiError";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+import { formatWeekdayMonthDay, formatMonthDay, getAppointmentTimestamp } from "@/lib/utils";
 
 interface Appointment {
   id: number;
@@ -39,30 +40,11 @@ interface Appointment {
   department: string;
 }
 
-const getAppointmentDateTime = (appointment: Appointment): number => {
-  if (!appointment.attend_date) return Number.MAX_SAFE_INTEGER;
-
-  const [year, month, day] = appointment.attend_date.split("-").map(Number);
-  if (!year || !month || !day) return Number.MAX_SAFE_INTEGER;
-
-  const timeParts = appointment.time ? appointment.time.split(":").map(Number) : [];
-  const hours = Number.isFinite(timeParts[0]) ? timeParts[0] : 0;
-  const minutes = Number.isFinite(timeParts[1]) ? timeParts[1] : 0;
-
-  return new Date(year, month - 1, day, hours, minutes, 0, 0).getTime();
-};
+const getAppointmentDateTime = (appointment: Appointment): number =>
+  getAppointmentTimestamp(appointment.attend_date, appointment.time);
 
 const formatDashboardDate = (dateString: string): string => {
-  if (!dateString) return "";
-
-  const [year, month, day] = dateString.split("-").map(Number);
-  if (!year || !month || !day) return dateString;
-
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
+  return formatWeekdayMonthDay(dateString);
 };
 
 const formatDashboardTime = (timeString: string): string => {
@@ -79,15 +61,7 @@ const formatDashboardTime = (timeString: string): string => {
 };
 
 const formatShortDate = (dateString: string): string => {
-  if (!dateString) return "";
-
-  const [year, month, day] = dateString.split("-").map(Number);
-  if (!year || !month || !day) return dateString;
-
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
+  return formatMonthDay(dateString);
 };
 
 export default function PatientDashboard() {

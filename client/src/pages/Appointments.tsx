@@ -25,7 +25,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { format, parse, isValid } from "date-fns";
 import Apis from "@/lib/Apis";
 import { getApiErrorMessage } from "@/lib/apiError";
-import { formatDate } from "@/lib/utils";
+import { formatDate, getDayOfWeek, getMonthShort, getDayOfMonth, getAppointmentTimestamp } from "@/lib/utils";
 
 interface Appointment {
   id: number;
@@ -70,33 +70,6 @@ const renderAppointmentTag = (
   );
 };
 
-// Format date to "MMM DD" format (e.g., "OCT 14")
-const formatDateShort = (dateString: string): string => {
-  if (!dateString) return "";
-  try {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase();
-  } catch {
-    return dateString;
-  }
-};
-
-// Format date to "MM-DD-YYYY" format (e.g., "09-15-2024")
-const formatDateLong = (dateString: string): string => {
-  if (!dateString) return "";
-  try {
-    const isoMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) return `${isoMatch[2]}-${isoMatch[3]}-${isoMatch[1]}`;
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) return dateString;
-    const mm = String(date.getMonth() + 1).padStart(2, "0");
-    const dd = String(date.getDate()).padStart(2, "0");
-    return `${mm}-${dd}-${date.getFullYear()}`;
-  } catch {
-    return dateString;
-  }
-};
-
 // Format time to 12-hour format with AM/PM
 const formatTime = (timeString: string): string => {
   if (!timeString) return "";
@@ -125,53 +98,9 @@ const calculateDuration = (startTime: string, endTime: string): number => {
   }
 };
 
-// Get day of week from date string
-const getDayOfWeek = (dateString: string): string => {
-  if (!dateString) return "";
-  try {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", { weekday: "long" });
-  } catch {
-    return "";
-  }
-};
-
-// Get month from date string
-const getMonth = (dateString: string): string => {
-  if (!dateString) return "";
-  try {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", { month: "short" }).toUpperCase();
-  } catch {
-    return "";
-  }
-};
-
-// Get day from date string
-const getDay = (dateString: string): string => {
-  if (!dateString) return "";
-  try {
-    const date = new Date(dateString);
-    return date.getDate().toString();
-  } catch {
-    return "";
-  }
-};
-
 // Get sortable date/time value for chronological appointment ordering
-const getAppointmentDateTime = (appointment: Appointment): number => {
-  if (!appointment.attend_date) return Number.MAX_SAFE_INTEGER;
-
-  const date = new Date(appointment.attend_date);
-  if (Number.isNaN(date.getTime())) return Number.MAX_SAFE_INTEGER;
-
-  const timeParts = appointment.time ? appointment.time.split(":").map(Number) : [];
-  const hours = Number.isFinite(timeParts[0]) ? timeParts[0] : 0;
-  const minutes = Number.isFinite(timeParts[1]) ? timeParts[1] : 0;
-
-  date.setHours(hours, minutes, 0, 0);
-  return date.getTime();
-};
+const getAppointmentDateTime = (appointment: Appointment): number =>
+  getAppointmentTimestamp(appointment.attend_date, appointment.time);
 
 // Format date to YYYY-MM-DD for the native date input
 const formatDateInput = (dateString: string): string => {
@@ -420,10 +349,10 @@ export default function Appointments() {
                     <div className="flex flex-col md:flex-row gap-6">
                       <div className="flex-shrink-0 flex flex-col items-center justify-center bg-secondary/50 rounded-xl p-4 w-full md:w-32 text-center">
                         <span className="text-sm font-bold text-primary uppercase tracking-wider">
-                          {getMonth(appointment.attend_date)}
+                          {getMonthShort(appointment.attend_date)}
                         </span>
                         <span className="text-3xl font-bold my-1">
-                          {getDay(appointment.attend_date)}
+                          {getDayOfMonth(appointment.attend_date)}
                         </span>
                         <span className="text-sm text-muted-foreground">
                           {getDayOfWeek(appointment.attend_date)}
@@ -527,7 +456,7 @@ export default function Appointments() {
                           {visit.service_full_name} {visit.attend_type_full_name}
                         </p>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
-                          <span>{formatDateLong(visit.attend_date)}</span>
+                          <span>{formatDate(visit.attend_date)}</span>
                           <span>•</span>
                           <span>{visit.provider_name}</span>
                           <span>•</span>

@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import Apis from "@/lib/Apis";
 import { getApiErrorMessage } from "@/lib/apiError";
 import FormViewModal from "@/components/FormViewModal";
+import { formatWeekdayMonthDay, getAppointmentTimestamp } from "@/lib/utils";
 
 interface Appointment {
   id: number;
@@ -58,13 +59,7 @@ interface FunnelSubmissionForm {
 }
 
 const formatDashboardDate = (dateString: string): string => {
-  if (!dateString) return "Monday, October 14";
-  try {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  } catch {
-    return "Monday, October 14";
-  }
+  return formatWeekdayMonthDay(dateString) || "Monday, October 14";
 };
 
 const formatDashboardTime = (timeString: string): string => {
@@ -78,19 +73,8 @@ const formatDashboardTime = (timeString: string): string => {
   }
 };
 
-const getAppointmentDateTime = (appointment: Appointment): number => {
-  if (!appointment.attend_date) return Number.MAX_SAFE_INTEGER;
-
-  const date = new Date(appointment.attend_date);
-  if (Number.isNaN(date.getTime())) return Number.MAX_SAFE_INTEGER;
-
-  const timeParts = appointment.time ? appointment.time.split(":").map(Number) : [];
-  const hours = Number.isFinite(timeParts[0]) ? timeParts[0] : 0;
-  const minutes = Number.isFinite(timeParts[1]) ? timeParts[1] : 0;
-
-  date.setHours(hours, minutes, 0, 0);
-  return date.getTime();
-};
+const getAppointmentDateTime = (appointment: Appointment): number =>
+  getAppointmentTimestamp(appointment.attend_date, appointment.time);
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
