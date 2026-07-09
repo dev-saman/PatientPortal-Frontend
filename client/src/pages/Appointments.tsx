@@ -6,6 +6,7 @@ import {
   CalendarDays,
   X,
   Loader2,
+  Plus,
 } from "lucide-react";
 import PageLoader from "@/components/PageLoader";
 import ScheduleAppointmentModal from "@/components/ScheduleAppointmentModal";
@@ -88,10 +89,10 @@ const calculateDuration = (startTime: string, endTime: string): number => {
   try {
     const [startHours, startMinutes] = startTime.split(":").map(Number);
     const [endHours, endMinutes] = endTime.split(":").map(Number);
-    
+
     const startTotalMinutes = startHours * 60 + startMinutes;
     const endTotalMinutes = endHours * 60 + endMinutes;
-    
+
     return endTotalMinutes - startTotalMinutes;
   } catch {
     return 0;
@@ -314,10 +315,10 @@ export default function Appointments() {
           <h1 className="text-2xl font-bold tracking-tight">Appointments</h1>
           <p className="text-muted-foreground">Manage your upcoming visits and view past history.</p>
         </div>
-        {/* <Button className="bg-primary hover:bg-primary/90" onClick={() => setScheduleModalOpen(true)}>
+        <Button className="bg-primary hover:bg-primary/90" onClick={() => setScheduleModalOpen(true)}>
           <Plus className="h-4 w-4" />
           Schedule Appointment
-        </Button> */}
+        </Button>
         <ScheduleAppointmentModal open={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} />
       </div>
 
@@ -326,7 +327,7 @@ export default function Appointments() {
           <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
           <TabsTrigger value="past">Past Visits</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="upcoming" className="mt-6 space-y-4">
           {upcomingAppointments.length === 0 ? (
             <Card className="shadow-soft">
@@ -337,83 +338,83 @@ export default function Appointments() {
           ) : (
             <>
               {upcomingAppointments.slice(0, displayedUpcomingCount).map((appointment, index) => {
-              const duration = calculateDuration(appointment.time, appointment.end_time);
-              const isVirtual =
-                appointment.is_virtual_text?.toLowerCase() === "telehealth" ||
-                appointment.attend_type?.toLowerCase().includes("virtual") ||
-                appointment.attend_type?.toLowerCase().includes("telehealth");
-              
-              return (
-                <Card key={appointment.id || index} className="shadow-soft border-l-4 border-l-primary">
-                  <CardContent className="p-6">
-                    <div className="flex flex-col md:flex-row gap-6">
-                      <div className="flex-shrink-0 flex flex-col items-center justify-center bg-secondary/50 rounded-xl p-4 w-full md:w-32 text-center">
-                        <span className="text-sm font-bold text-primary uppercase tracking-wider">
-                          {getMonthShort(appointment.attend_date)}
-                        </span>
-                        <span className="text-3xl font-bold my-1">
-                          {getDayOfMonth(appointment.attend_date)}
-                        </span>
-                        <span className="text-sm text-muted-foreground">
-                          {getDayOfWeek(appointment.attend_date)}
-                        </span>
-                      </div>
-                      
-                      <div className="flex-1 space-y-4">
-                        <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              {renderAppointmentTag(appointment.appt_status, APPOINTMENT_STATUS_STYLES)}
-                              {renderAppointmentTag(appointment.is_virtual_text, APPOINTMENT_VISIT_TYPE_STYLES)}
+                const duration = calculateDuration(appointment.time, appointment.end_time);
+                const isVirtual =
+                  appointment.is_virtual_text?.toLowerCase() === "telehealth" ||
+                  appointment.attend_type?.toLowerCase().includes("virtual") ||
+                  appointment.attend_type?.toLowerCase().includes("telehealth");
+
+                return (
+                  <Card key={appointment.id || index} className="shadow-soft border-l-4 border-l-primary">
+                    <CardContent className="p-6">
+                      <div className="flex flex-col md:flex-row gap-6">
+                        <div className="flex-shrink-0 flex flex-col items-center justify-center bg-secondary/50 rounded-xl p-4 w-full md:w-32 text-center">
+                          <span className="text-sm font-bold text-primary uppercase tracking-wider">
+                            {getMonthShort(appointment.attend_date)}
+                          </span>
+                          <span className="text-3xl font-bold my-1">
+                            {getDayOfMonth(appointment.attend_date)}
+                          </span>
+                          <span className="text-sm text-muted-foreground">
+                            {getDayOfWeek(appointment.attend_date)}
+                          </span>
+                        </div>
+
+                        <div className="flex-1 space-y-4">
+                          <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                {renderAppointmentTag(appointment.appt_status, APPOINTMENT_STATUS_STYLES)}
+                                {renderAppointmentTag(appointment.is_virtual_text, APPOINTMENT_VISIT_TYPE_STYLES)}
+                              </div>
+                              <h3 className="text-xl font-bold">
+                                {appointment.service_full_name} {appointment.attend_type_full_name}
+                              </h3>
+                              <p className="text-muted-foreground">with {appointment.provider_name}</p>
                             </div>
-                            <h3 className="text-xl font-bold">
-                              {appointment.service_full_name} {appointment.attend_type_full_name}
-                            </h3>
-                            <p className="text-muted-foreground">with {appointment.provider_name}</p>
                           </div>
-                        </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                          <div className="flex items-center gap-3">
-                            <Clock className="h-4 w-4 text-muted-foreground" />
-                            <span>
-                              {formatTime(appointment.time)} - {formatTime(appointment.end_time)} ({duration} min)
-                            </span>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                            <div className="flex items-center gap-3">
+                              <Clock className="h-4 w-4 text-muted-foreground" />
+                              <span>
+                                {formatTime(appointment.time)} - {formatTime(appointment.end_time)} ({duration} min)
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              {isVirtual ? (
+                                <>
+                                  <Video className="h-4 w-4 text-muted-foreground" />
+                                  <span>Video Visit</span>
+                                </>
+                              ) : (
+                                <>
+                                  <MapPin className="h-4 w-4 text-muted-foreground" />
+                                  <span>{appointment.department}</span>
+                                </>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            {isVirtual ? (
-                              <>
-                                <Video className="h-4 w-4 text-muted-foreground" />
-                                <span>Video Visit</span>
-                              </>
-                            ) : (
-                              <>
-                                <MapPin className="h-4 w-4 text-muted-foreground" />
-                                <span>{appointment.department}</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
 
-      
-                        <div className="flex flex-wrap gap-3 pt-2">
-                          {/* <Button className="bg-primary hover:bg-primary/90">
+
+                          <div className="flex flex-wrap gap-3 pt-2">
+                            {/* <Button className="bg-primary hover:bg-primary/90">
                             eCheck-In
                           </Button> */}
-                          <Button variant="outline" onClick={() => openRescheduleModal(appointment)}>
-                            Reschedule
-                          </Button>
-                          {/* <Button variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                            <Button variant="outline" onClick={() => openRescheduleModal(appointment)}>
+                              Reschedule
+                            </Button>
+                            {/* <Button variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10">
                             Cancel
                           </Button> */}
+                          </div>
+
                         </div>
-                       
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
+                    </CardContent>
+                  </Card>
+                );
+              })}
               {upcomingAppointments.length > ITEMS_PER_PAGE && displayedUpcomingCount < upcomingAppointments.length && (
                 <div className="flex justify-center pt-4">
                   <Button
@@ -751,10 +752,10 @@ export default function Appointments() {
                           {value !== null && value !== undefined && value !== ""
                             ? key === "clinical_note"
                               ? (() => {
-                                  const raw = String(value);
-                                  const filename = raw.split(/[\\/]/).pop() || raw;
-                                  return filename;
-                                })()
+                                const raw = String(value);
+                                const filename = raw.split(/[\\/]/).pop() || raw;
+                                return filename;
+                              })()
                               : /^\d{4}-\d{2}-\d{2}/.test(String(value))
                                 ? formatDate(String(value))
                                 : String(value)
