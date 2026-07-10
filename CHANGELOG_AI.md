@@ -20,6 +20,18 @@ and notable configuration/docs changes.
 
 ## 2026-07-10
 
+### Funnel form list: only completed forms are clickable; uncompleted forms disabled
+- **What:** In the right-side form list on the funnel page, uncompleted forms were
+  clickable (they previewed for 2s then auto-redirected back). Disabled clicking on
+  uncompleted forms entirely — only forms with `submission_status === "completed"`
+  are now clickable (view + 2s auto-return preserved). Uncompleted forms, including
+  the current pending one, have no `onClick` and show a `cursor-not-allowed` cursor,
+  so the patient can only revisit forms they've already completed and stays on their
+  active form.
+- **Files/areas:** `client/src/pages/PatientFunnelForm.tsx` (right-card form list item).
+- **Auth / case-scoping / patient-data:** None — client-side interaction/UX only;
+  no data, auth, or API changes.
+
 ### Fix: funnel form status not refreshing when two cases share the same funnel id
 - **What:** Switching the active case while viewing a funnel form (`/form/:funnelId`)
   did not refetch `get-patient-funnel-submission-details/<id>` when the newly

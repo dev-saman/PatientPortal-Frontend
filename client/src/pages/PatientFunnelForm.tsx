@@ -1019,28 +1019,36 @@ export default function PatientFunnelForm() {
                     return (
                       <div
                         key={idx}
-                        onClick={() => {
-                          // Clear any existing redirect timer
-                          if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+                        // Only completed forms are accessible. Uncompleted forms
+                        // (including the current pending one) are disabled — no click,
+                        // no navigation — so the patient can only view forms they have
+                        // already completed and must stay on their active form.
+                        onClick={
+                          isCompleted
+                            ? () => {
+                                // Clear any existing redirect timer
+                                if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
 
-                          // Find the first pending/incomplete form (the only active editable form)
-                          const firstPendingIndex = forms.findIndex(
-                            (f) => f.submission_status !== "completed"
-                          );
+                                // Find the first pending/incomplete form (the only active editable form)
+                                const firstPendingIndex = forms.findIndex(
+                                  (f) => f.submission_status !== "completed"
+                                );
 
-                          // Always show the clicked form first (temporary preview)
-                          setSelectedFormIndex(idx);
+                                // Always show the clicked form first (temporary preview)
+                                setSelectedFormIndex(idx);
 
-                          // If the clicked form is NOT the first pending form, auto-redirect back after 2 seconds
-                          if (firstPendingIndex >= 0 && idx !== firstPendingIndex) {
-                            redirectTimerRef.current = setTimeout(() => {
-                              setSelectedFormIndex(firstPendingIndex);
-                            }, 2000);
-                          }
-                        }}
-                        className={`flex items-center gap-3 cursor-pointer transition-colors p-2 ${
-                          isActive ? "bg-[#f3f3f3] rounded-[5px]" : ""
-                        }`}
+                                // If the clicked form is NOT the first pending form, auto-redirect back after 2 seconds
+                                if (firstPendingIndex >= 0 && idx !== firstPendingIndex) {
+                                  redirectTimerRef.current = setTimeout(() => {
+                                    setSelectedFormIndex(firstPendingIndex);
+                                  }, 2000);
+                                }
+                              }
+                            : undefined
+                        }
+                        className={`flex items-center gap-3 transition-colors p-2 ${
+                          isCompleted ? "cursor-pointer" : "cursor-not-allowed"
+                        } ${isActive ? "bg-[#f3f3f3] rounded-[5px]" : ""}`}
                       >
                         {isCompleted ? (
                           <div className="h-5 w-5 flex-shrink-0 rounded-full bg-[#8b1a1a] flex items-center justify-center">
