@@ -267,6 +267,7 @@ export default function Layout({ children }: LayoutProps) {
                         } catch {
                           setLocation("/documents");
                         }
+                        
                         // Force a remount so the form page refetches even when the newly
                         // selected case resolves to the SAME funnel id (two cases can
                         // share one funnel, e.g. both use /form/33). Without this the
