@@ -268,6 +268,14 @@ export default function Layout({ children }: LayoutProps) {
                         } catch {
                           setLocation("/documents");
                         }
+                        // Force a remount so the form page refetches even when the newly
+                        // selected case resolves to the SAME funnel id (two cases can
+                        // share one funnel, e.g. both use /form/33). Without this the
+                        // setLocation above is a no-op, the funnel id in the route never
+                        // changes, and get-patient-funnel-submission-details never
+                        // refetches for the new case_id — leaving the completion status
+                        // stale. Remounting reruns the fetch with the new case_id.
+                        setContentRefreshKey((previousKey) => previousKey + 1);
                         return;
                       }
 

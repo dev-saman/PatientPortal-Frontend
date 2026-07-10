@@ -18,6 +18,24 @@ and notable configuration/docs changes.
 
 ---
 
+## 2026-07-10
+
+### Fix: funnel form status not refreshing when two cases share the same funnel id
+- **What:** Switching the active case while viewing a funnel form (`/form/:funnelId`)
+  did not refetch `get-patient-funnel-submission-details/<id>` when the newly
+  selected case resolved to the **same** funnel id as the current one (e.g. cases
+  `10006624` and `10006651` both map to `/form/33`). The case-switch handler only
+  navigated via `setLocation`, which is a no-op when the funnel id is unchanged, so
+  `PatientFunnelForm`'s fetch effect (keyed on `funnelId`) never re-ran and the
+  right-card completion status stayed stale. Added a `contentRefreshKey` bump in the
+  `/form/` branch of the case-switch handler so the page remounts and refetches with
+  the new `case_id` — matching the remount behavior already used for every other page.
+- **Files/areas:** `client/src/components/Layout.tsx` (case-selector `onChange`).
+- **Auth / case-scoping / patient-data:** Case-scoping fix — ensures funnel
+  submission data is always fetched for the currently selected case; the new
+  `case_id` is already written to `localStorage` before the refetch, so the API
+  request interceptor scopes correctly. No auth/token changes.
+
 ## 2026-07-02
 
 ### Reconciled AGENTS.md Git Workflow with local-only rules and real deploy
