@@ -38,6 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 import { resolveCurrentCaseFunnelId } from "@/lib/funnels";
 import { SelectedCaseContext } from "@/contexts/SelectedCaseContext";
 
+
 interface LayoutProps {
   children: React.ReactNode;
 }
