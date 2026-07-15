@@ -118,6 +118,14 @@ const addDays = (ymd: string, days: number): string => {
 // One page = a 7-calendar-day window. Since the backend omits weekends, any 7
 // consecutive calendar days contain exactly 5 working days → 5 grid columns.
 const PAGE_WINDOW_DAYS = 7;
+// Data is fetched in larger BLOCKS to minimise API calls: one request covers
+// BLOCK_PAGES pages, then the grid slices it into 5-day pages client-side (so
+// navigating within a block is instant). BLOCK_PAGES × 7 calendar days always
+// yields BLOCK_PAGES × 5 working days (weekends dropped). The next block is
+// prefetched in the background so crossing blocks shows no loading screen.
+const BLOCK_PAGES = 3;
+const BLOCK_WINDOW_DAYS = BLOCK_PAGES * PAGE_WINDOW_DAYS; // 21 calendar days ≈ 15 working days
+const PAGE_COLUMNS = 5; // working-day columns per page
 
 interface TimeSlot {
   time: string;
@@ -195,12 +203,16 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
   // the appointment-schedule call (path is case_id/ma_id/patient_id)
   const [preauthMaId, setPreauthMaId] = useState<string | number>("");
 
-  // Time slots fetched lazily from get-time-slots-date-range, one page at a time
-  // (page number → that page's dates). Only the visible page's window is requested;
-  // already-loaded pages are cached and reused when navigating back.
-  const [pageCache, setPageCache] = useState<Record<number, DateSlots[]>>({});
-  const pageCacheRef = useRef<Record<number, DateSlots[]>>({});
-  const [timeSlotsLoading, setTimeSlotsLoading] = useState(false);
+  // Time slots fetched lazily in BLOCKS (block index → that block's working days).
+  // A block is one API request covering several pages; the grid slices it into 5-day
+  // pages client-side. Loaded blocks are cached, and the next block is prefetched in
+  // the background, so navigation rarely shows a loading screen.
+  const [blockCache, setBlockCache] = useState<Record<number, DateSlots[]>>({});
+  const blockCacheRef = useRef<Record<number, DateSlots[]>>({});
+  const inFlightBlocksRef = useRef<Set<number>>(new Set());
+  // Bumped on every query reset; in-flight fetches from a previous query are
+  // discarded on resolve so a stale response never overwrites fresh data.
+  const loadGenerationRef = useRef(0);
   const [timeSlotsError, setTimeSlotsError] = useState<string | null>(null);
 
   // Find the group whose short_name matches the selected speciality
@@ -337,8 +349,10 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
     setSvcDateEnd("");
     setPreauthCaseId("");
     setPreauthMaId("");
-    pageCacheRef.current = {};
-    setPageCache({});
+    loadGenerationRef.current += 1;
+    blockCacheRef.current = {};
+    inFlightBlocksRef.current = new Set();
+    setBlockCache({});
     setPage(1);
     setTimeSlotsError(null);
     setSelectedByDay({});
@@ -436,21 +450,25 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
     return svcDateStart >= today ? svcDateStart : today;
   }, [svcDateStart]);
 
-  // Fetch one page's window (cached). `pageNum` is 1-indexed.
-  const loadPage = useCallback(
-    async (pageNum: number) => {
+  // Fetch one block's window (BLOCK_PAGES pages) via a single API call and cache it.
+  // `background: true` prefetches without showing the page loader. Already-loaded or
+  // in-flight blocks are skipped. `blockIndex` is 0-based.
+  const loadBlock = useCallback(
+    async (blockIndex: number, background = false) => {
+      if (blockIndex < 0) return;
       if (!selectedLocation || !selectedPhysicianId || !scheduleRangeStart || !svcDateEnd || !preauthCaseId) return;
-      if (pageCacheRef.current[pageNum]) return; // already loaded
-      const winStart = addDays(scheduleRangeStart, PAGE_WINDOW_DAYS * (pageNum - 1));
+      if (blockCacheRef.current[blockIndex] || inFlightBlocksRef.current.has(blockIndex)) return;
+      const winStart = addDays(scheduleRangeStart, BLOCK_WINDOW_DAYS * blockIndex);
       if (winStart > svcDateEnd) {
-        pageCacheRef.current = { ...pageCacheRef.current, [pageNum]: [] };
-        setPageCache(pageCacheRef.current);
+        blockCacheRef.current = { ...blockCacheRef.current, [blockIndex]: [] };
+        setBlockCache(blockCacheRef.current);
         return;
       }
-      const rawEnd = addDays(winStart, PAGE_WINDOW_DAYS - 1);
+      const rawEnd = addDays(winStart, BLOCK_WINDOW_DAYS - 1);
       const winEnd = rawEnd <= svcDateEnd ? rawEnd : svcDateEnd;
-      setTimeSlotsLoading(true);
-      setTimeSlotsError(null);
+      inFlightBlocksRef.current.add(blockIndex);
+      if (!background) setTimeSlotsError(null);
+      const gen = loadGenerationRef.current;
       try {
         const data: any = await Apis.getTimeSlotDateRange(
           selectedPhysicianId,
@@ -461,42 +479,59 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
           selectedVisitType,
           selectedSpeciality,
         );
+        if (gen !== loadGenerationRef.current) return; // query changed — discard stale response
         if (!data.status) {
-          setTimeSlotsError(data.message || "Failed to load time slots");
+          if (!background) setTimeSlotsError(data.message || "Failed to load time slots");
           return;
         }
         // Visit-type appointment length; fall back to the default when absent.
         const dur = Number(data.duration_minutes);
         setSlotDuration(Number.isFinite(dur) && dur > 0 ? dur : DEFAULT_DURATION_MIN);
         const dates: DateSlots[] = Array.isArray(data.dates) ? data.dates : [];
-        pageCacheRef.current = { ...pageCacheRef.current, [pageNum]: dates };
-        setPageCache(pageCacheRef.current);
+        blockCacheRef.current = { ...blockCacheRef.current, [blockIndex]: dates };
+        setBlockCache(blockCacheRef.current);
       } catch {
-        setTimeSlotsError("Failed to load time slots");
+        if (gen === loadGenerationRef.current && !background) setTimeSlotsError("Failed to load time slots");
       } finally {
-        setTimeSlotsLoading(false);
+        inFlightBlocksRef.current.delete(blockIndex);
       }
     },
     [selectedLocation, selectedPhysicianId, scheduleRangeStart, svcDateEnd, preauthCaseId, selectedVisitType, selectedSpeciality],
   );
 
-  // Reset the cache + selections and load page 1 whenever the query changes
-  // (location / provider / dates / visit type / speciality). `loadPage`'s identity
+  // Load the block the given (1-based) page belongs to, then prefetch the adjacent
+  // blocks in the background so crossing into them is instant.
+  const ensureBlockForPage = useCallback(
+    (pageNum: number) => {
+      const blockIndex = Math.floor((pageNum - 1) / BLOCK_PAGES);
+      loadBlock(blockIndex).then(() => {
+        loadBlock(blockIndex + 1, true);
+        if (blockIndex > 0) loadBlock(blockIndex - 1, true);
+      });
+    },
+    [loadBlock],
+  );
+
+  // Reset the cache + selections and load the first block whenever the query changes
+  // (location / provider / dates / visit type / speciality). `loadBlock`'s identity
   // changes with exactly those inputs, so depending on it covers all of them.
   useEffect(() => {
-    pageCacheRef.current = {};
-    setPageCache({});
+    loadGenerationRef.current += 1;
+    blockCacheRef.current = {};
+    inFlightBlocksRef.current = new Set();
+    setBlockCache({});
     setSelectedByDay({});
     setTimeSlotsError(null);
     setPage(1);
-    loadPage(1);
-  }, [loadPage]);
+    ensureBlockForPage(1);
+  }, [ensureBlockForPage]);
 
-  // Navigate pages, fetching the target page's window if it isn't cached yet.
+  // Navigate pages. Blocks are cached (and neighbours prefetched), so within a block
+  // this is instant and crossing to a prefetched block usually shows no loader.
   const goToPage = (pageNum: number) => {
     if (pageNum < 1) return;
     setPage(pageNum);
-    loadPage(pageNum);
+    ensureBlockForPage(pageNum);
   };
 
   const todayYMD = toYMD(new Date());
@@ -701,12 +736,20 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
     return "disabled-day";
   };
 
-  // Current page's dates (lazily loaded window). Prev/Next fetch adjacent windows.
-  const pagedDates = pageCache[page] ?? [];
+  // Slice the current page's 5 columns out of its (already-cached) block.
+  const currentBlockIndex = Math.floor((page - 1) / BLOCK_PAGES);
+  const currentBlock = blockCache[currentBlockIndex] ?? [];
+  const pageOffsetInBlock = (page - 1) % BLOCK_PAGES;
+  const pagedDates = currentBlock.slice(pageOffsetInBlock * PAGE_COLUMNS, pageOffsetInBlock * PAGE_COLUMNS + PAGE_COLUMNS);
+  const pagesInCurrentBlock = Math.max(1, Math.ceil(currentBlock.length / PAGE_COLUMNS));
+  // The page loader shows whenever the current page's block hasn't arrived yet —
+  // covers both a foreground fetch and jumping onto a still-prefetching block.
+  const isPageLoading = !(currentBlockIndex in blockCache) && !timeSlotsError;
   const hasPrevPage = page > 1;
   const hasNextPage =
-    !!scheduleRangeStart && !!svcDateEnd &&
-    addDays(scheduleRangeStart, PAGE_WINDOW_DAYS * page) <= svcDateEnd;
+    pageOffsetInBlock + 1 < pagesInCurrentBlock || // more pages already in this block
+    (!!scheduleRangeStart && !!svcDateEnd &&
+      addDays(scheduleRangeStart, BLOCK_WINDOW_DAYS * (currentBlockIndex + 1)) <= svcDateEnd); // a next block exists
 
   // All unique times across the current page's dates, sorted chronologically so
   // rows line up across day columns.
@@ -858,20 +901,20 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
                 <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white">
                   <button
                     onClick={() => goToPage(page - 1)}
-                    disabled={!hasPrevPage || timeSlotsLoading}
+                    disabled={!hasPrevPage || isPageLoading}
                     className="flex items-center gap-1 text-sm border rounded px-3 py-1 transition-colors disabled:opacity-40 hover:text-white"
                     style={{ borderColor: "#5b0f0f", color: !hasPrevPage ? "#5b0f0f" : undefined }}
-                    onMouseEnter={(e) => { if (hasPrevPage && !timeSlotsLoading) e.currentTarget.style.background = "#5b0f0f"; }}
+                    onMouseEnter={(e) => { if (hasPrevPage && !isPageLoading) e.currentTarget.style.background = "#5b0f0f"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
                   >
                     <ChevronLeft className="h-4 w-4" /> Previous
                   </button>
                   <button
                     onClick={() => goToPage(page + 1)}
-                    disabled={!hasNextPage || timeSlotsLoading}
+                    disabled={!hasNextPage || isPageLoading}
                     className="flex items-center gap-1 text-sm border rounded px-3 py-1 transition-colors disabled:opacity-40 hover:text-white"
                     style={{ borderColor: "#5b0f0f", color: !hasNextPage ? "#5b0f0f" : undefined }}
-                    onMouseEnter={(e) => { if (hasNextPage && !timeSlotsLoading) e.currentTarget.style.background = "#5b0f0f"; }}
+                    onMouseEnter={(e) => { if (hasNextPage && !isPageLoading) e.currentTarget.style.background = "#5b0f0f"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
                   >
                     Next <ChevronRight className="h-4 w-4" />
@@ -880,28 +923,28 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
               )}
 
               {/* Time slots body */}
-              {timeSlotsLoading && (
+              {isPageLoading && (
                 <div className="flex items-center justify-center py-10">
                   <Loader2 className="h-6 w-6 animate-spin text-primary" />
                 </div>
               )}
-              {!timeSlotsLoading && timeSlotsError && (
+              {!isPageLoading && timeSlotsError && (
                 <div className="flex items-center justify-center gap-2 py-6 text-sm text-red-600 px-4">
                   <AlertCircle className="h-4 w-4 flex-shrink-0" />
                   {timeSlotsError}
                 </div>
               )}
-              {!timeSlotsLoading && !timeSlotsError && pagedDates.length === 0 && (
+              {!isPageLoading && !timeSlotsError && pagedDates.length === 0 && (
                 <div className="flex items-center justify-center py-8 text-sm text-gray-400">
                   No time slots available
                 </div>
               )}
-              {!timeSlotsLoading && !timeSlotsError && pagedDates.length > 0 && pageTimeSlots.length === 0 && (
+              {!isPageLoading && !timeSlotsError && pagedDates.length > 0 && pageTimeSlots.length === 0 && (
                 <div className="flex items-center justify-center py-8 text-sm text-gray-400">
                   Provider not available for the selected days
                 </div>
               )}
-              {!timeSlotsLoading && !timeSlotsError && pagedDates.length > 0 && pageTimeSlots.length > 0 && (
+              {!isPageLoading && !timeSlotsError && pagedDates.length > 0 && pageTimeSlots.length > 0 && (
               <div className="overflow-x-auto p-2">
                 <table className="w-full table-fixed text-sm border-separate" style={{ borderSpacing: "3px" }}>
                   <thead>

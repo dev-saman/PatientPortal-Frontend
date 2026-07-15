@@ -20,27 +20,27 @@ and notable configuration/docs changes.
 
 ## 2026-07-15
 
-### Schedule grid: lazy per-page loading (one date window at a time) instead of the whole pre-auth range
+### Schedule grid: block-based lazy loading with background prefetch (fewer calls, no loading screen on navigation)
 - **What:** "Schedule Remaining Appointments" (`ScheduleAppointmentModal`) previously fetched the entire
-  pre-auth window (e.g. 07-14 → 12-31 ≈ 120 working days, ~78 kB) in one `get-time-slots-date-range`
-  call and paginated purely client-side. It now loads **one page's date window at a time**: page 1 =
-  `[max(today, svc_date_start) … +6 days]`, and each Next/Previous fetches the adjacent 7-calendar-day
-  window (which, since the backend omits weekends, is always the next/prev 5 working-day columns).
-  Fetched pages are cached (`pageCache` + `pageCacheRef`) so navigating back is instant and never
-  refetches. No backend change — the endpoint already accepts `svc_date_start`/`svc_date_end`, so a
-  narrow window is just passed per page.
-- **How:** Replaced the full-range `timeSlotDates` state + `useEffect` fetch with `scheduleRangeStart`
-  (memo), `loadPage(pageNum)` (`useCallback`, cached, computes the window & calls the range API),
-  `goToPage`, and a reset-effect that reloads page 1 when the query (location/provider/dates/visit-type/
-  speciality) changes. Pagination controls now use `hasPrevPage`/`hasNextPage` (derived from the window
-  math vs `svc_date_end`) instead of `totalPages`, and are disabled while a page is loading. Removed the
-  old client-side slicing (`DATES_PER_PAGE`, `totalPages`) and the "jump to the page containing today"
-  logic (page 1 now starts at today).
-- **Files/areas:** `client/src/components/ScheduleAppointmentModal.tsx` (`addDays`/`PAGE_WINDOW_DAYS`
-  helpers, page-cache state, `loadPage`/`goToPage`, reset effect, nav controls, empty-state check,
-  open-reset).
+  pre-auth window (~120 working days, ~78 kB) in one call and paginated client-side. It now fetches in
+  **blocks** — one `get-time-slots-date-range` call covers `BLOCK_PAGES` (3) pages = a 21-calendar-day
+  window ≈ 15 working days (weekends omitted, so 3 × 7 days = 3 × 5 columns) — and the grid slices each
+  block into 5-day pages **client-side**, so navigating *within* a block is instant. The **next block is
+  prefetched in the background** as soon as you enter a block, so crossing into it also shows no loading
+  screen. Blocks are cached (`blockCache`), so going back never refetches. Page 1 starts at
+  `max(today, svc_date_start)`.
+- **How:** `loadBlock(blockIndex, background?)` fetches+caches a block's window (skips cached/in-flight
+  blocks; `background` suppresses the page loader). `ensureBlockForPage(page)` loads the page's block then
+  prefetches the neighbours. The page loader (`isPageLoading`) is driven by "current block not in cache
+  yet" (covers both a foreground fetch and jumping onto a still-prefetching block). A `loadGenerationRef`
+  guard discards stale in-flight responses when the query resets (e.g. visit-type change). Pagination
+  uses `hasPrevPage`/`hasNextPage` (in-block offset, else next-block-window vs `svc_date_end`). Tunable
+  via `BLOCK_PAGES`.
+- **Files/areas:** `client/src/components/ScheduleAppointmentModal.tsx` (`BLOCK_PAGES`/`BLOCK_WINDOW_DAYS`
+  /`PAGE_COLUMNS` + `addDays` helpers, `blockCache`/refs, `loadBlock`/`ensureBlockForPage`/`goToPage`,
+  reset + open-reset, nav controls, empty/loading render, block slicing).
 - **Auth / case-scoping / patient-data:** None. Same endpoint, case-scoped as before; only the requested
-  date window narrowed. Backend already supports the date-range params, so no backend work needed.
+  date window changes. No backend work — the endpoint already accepts `svc_date_start`/`svc_date_end`.
 
 ### Reschedule: lunch slots show "– Lunch" again in the Start Time dropdown
 - **What:** After the Start options moved to `get-time-slots-date-range`, lunch slots (`type:"lunch"`)
