@@ -57,7 +57,7 @@ export const getActiveCaseId = (): string => {
 // Create axios instance with base configuration
 const axiosInstance: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "https://adm.advantagehcs.com/api",
-  timeout: 30000,
+  timeout: 90000,
   headers: {
     "Content-Type": "application/json",
     "Accept": "application/json",
