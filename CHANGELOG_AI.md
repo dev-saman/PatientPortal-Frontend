@@ -20,11 +20,24 @@ and notable configuration/docs changes.
 
 ## 2026-07-15
 
-### Reschedule calendar: selected date can no longer be deselected
-- **What:** Added the `required` prop to the Reschedule `<Calendar>` (react-day-picker `mode="single"`).
-  Clicking the already-selected date now keeps it selected instead of toggling it off (the default
-  single-mode behaviour). A date is always selected once chosen.
-- **Files/areas:** `client/src/pages/Appointments.tsx` (reschedule `<Calendar>`).
+### Reschedule: lunch slots show "– Lunch" again in the Start Time dropdown
+- **What:** After the Start options moved to `get-time-slots-date-range`, lunch slots (`type:"lunch"`)
+  rendered as a plain time with no indicator (the range labels carry no "(Lunch)" suffix, unlike the old
+  `available-time-slots` labels). Added a `lunch` branch to `slotDisplayLabel` so they show
+  "<time> – Lunch" (disabled), matching the "– Not Available" / "– Current" style. Duration-fit checks
+  already treat lunch as unavailable, so a duration spanning lunch still can't be selected.
+- **Files/areas:** `client/src/pages/Appointments.tsx` (`slotDisplayLabel`).
+- **Auth / case-scoping / patient-data:** None (presentation only).
+
+### Reschedule calendar: selected date can no longer be deselected; time preserved across date changes
+- **What:** (a) Added the `required` prop to the Reschedule `<Calendar>` (react-day-picker
+  `mode="single"`) so clicking the already-selected date keeps it selected instead of toggling it off.
+  (b) `handleRescheduleDateChange` now **no-ops when the same date is re-selected** (so re-clicking the
+  chosen date no longer clears Start/End). (c) When a **different** date is picked, the previously
+  selected Start/End are **kept if the full required duration still fits** on the new date (every 15-min
+  block in `[start, start+duration)` is available); otherwise they clear so the user re-picks.
+- **Files/areas:** `client/src/pages/Appointments.tsx` (reschedule `<Calendar>` `required`,
+  `handleRescheduleDateChange`).
 - **Auth / case-scoping / patient-data:** None.
 
 ### Schedule grid: a holiday closes the whole day, regardless of other-location schedule

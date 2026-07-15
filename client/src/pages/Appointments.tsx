@@ -248,12 +248,13 @@ const OCCUPIED_SLOT_TYPES = new Set([
 ]);
 
 // Display label for a Start/End time option. The appointment's own slot is shown as
-// "<time> – Current"; occupied slots are shown generically as "<time> – Not Available"
-// (their backend reason is stripped); every other type — holiday, provider-on-leave,
-// lunch, available — keeps its backend label.
+// "<time> – Current"; lunch slots as "<time> – Lunch"; occupied slots generically as
+// "<time> – Not Available" (their backend reason is stripped); everything else keeps
+// its backend label.
 const slotDisplayLabel = (o: SlotOption): string => {
   const clean = o.label.replace(/\s*\(.*\)\s*$/, "").trim();
   if (o.type === "current") return `${clean} – Current`;
+  if (o.type === "lunch") return `${clean} – Lunch`;
   return OCCUPIED_SLOT_TYPES.has(o.type) ? `${clean} – Not Available` : o.label;
 };
 
@@ -556,6 +557,10 @@ export default function Appointments() {
   // start_time, so no "start_time is outside provider schedule" error). Start/End
   // reset to unselected; the user then picks a start.
   const handleRescheduleDateChange = async (ymd: string) => {
+    // Re-selecting the already-chosen date is a no-op — don't reload the options or
+    // clear the currently selected Start/End time.
+    if (ymd && ymd === rescheduleDate) return;
+
     // Holiday / provider-leave days are shown (red) but not selectable — reject the
     // click with an explanatory toast and keep the previous date.
     const dayInfo = ymd ? rescheduleDayInfo[ymd] : undefined;
@@ -567,13 +572,14 @@ export default function Appointments() {
       toast.error("The provider is on leave on this date. Please pick another date.");
       return;
     }
+    const prevStart = rescheduleStartTime;
     setRescheduleDate(ymd);
-    setRescheduleStartTime("");
-    setRescheduleEndTime("");
     setRescheduleErrors((prev) => ({ ...prev, startTime: undefined }));
     const detail = appointmentDetail;
     if (!detail || !ymd) {
       setRescheduleStartOptions([]);
+      setRescheduleStartTime("");
+      setRescheduleEndTime("");
       return;
     }
     setRescheduleSlotsLoading(true);
@@ -581,11 +587,30 @@ export default function Appointments() {
     setRescheduleSlotsLoading(false);
     // Mark the current window "– Current" only on the appointment's own date.
     const isOriginalDate = ymd === formatDateInput(detail.attend_date);
-    setRescheduleStartOptions(
-      isOriginalDate
-        ? withCurrentRange(starts, detail.time.substring(0, 5), detail.end_time.substring(0, 5))
-        : starts,
-    );
+    const options = isOriginalDate
+      ? withCurrentRange(starts, detail.time.substring(0, 5), detail.end_time.substring(0, 5))
+      : starts;
+    setRescheduleStartOptions(options);
+
+    // Keep the previously-selected Start/End if the full required duration still
+    // fits on the new date (every 15-min block in [start, start+duration) is
+    // available); otherwise clear so the user re-picks.
+    const duration = calculateDuration(detail.time.substring(0, 5), detail.end_time.substring(0, 5));
+    const availableByMin = new Map(options.map((o) => [timeToMinutes(o.value), !o.disabled]));
+    const blocks = duration > 0 ? Math.max(1, Math.round(duration / 15)) : 0;
+    const durationStillFits =
+      !!prevStart &&
+      blocks > 0 &&
+      Array.from({ length: blocks }, (_, i) => timeToMinutes(prevStart) + i * 15).every(
+        (t) => availableByMin.get(t) === true,
+      );
+    if (durationStillFits) {
+      setRescheduleStartTime(prevStart);
+      setRescheduleEndTime(addMinutesToTime(prevStart, duration));
+    } else {
+      setRescheduleStartTime("");
+      setRescheduleEndTime("");
+    }
   };
 
   // Start time changed: set End = Start + the appointment's required duration, and
