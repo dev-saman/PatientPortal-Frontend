@@ -260,6 +260,23 @@ export default class Apis {
   };
 
   /**
+   * Notify support that a preauthorization is missing the details required for
+   * scheduling (is_details_missing). case_id and ma_id come from the
+   * get-approved-preauth response and are passed explicitly as query params; the
+   * preauth's case_id may differ from the active case, so this endpoint is exempt
+   * from the interceptor's auto case_id injection.
+   * @param caseId - The case id of the preauthorization
+   * @param maId - The med-auth id of the preauthorization
+   * @returns API response with { success, message }
+   */
+  static notifyPatientPreauthMissingDetails = (caseId: string | number, maId: string | number) => {
+    return Network(
+      "POST",
+      `notify-patient-preauth-missing-details?case_id=${encodeURIComponent(caseId)}&ma_id=${encodeURIComponent(maId)}`,
+    );
+  };
+
+  /**
    * Get the list of proxies for the current patient
    * @returns Proxy list response with proxies array
    */
@@ -342,17 +359,65 @@ export default class Apis {
     );
   };
 
+  // Book one appointment. Path segments: user name / case_id / ma_id / patient_id.
+  // Exempt from case_id auto-injection (see CASE_ID_EXEMPT_ENDPOINTS) since case_id
+  // is carried as a path segment. Body keys match the backend contract exactly,
+  // including the misspelled `physicanId`/`physicanName`.
+  static scheduleAppointment = (
+    name: string,
+    caseId: string | number,
+    maId: string | number,
+    patientId: string | number,
+    payload: {
+      department: string;
+      service: string;
+      attend_type: string;
+      pa_req: string;
+      attend_status: string;
+      physicanId: number | string;
+      physicanName: string;
+      attend_date: string;
+      svc_date_start: string;
+      svc_date_end: string;
+      time: string;
+      end_time: string;
+      status: string;
+      pa_resp: string;
+      no_sessions: number;
+      provider_code: string;
+      company_name: string;
+      is_patient_portal: number;
+    },
+  ) => {
+    const path = `appointment-schedule/${encodeURIComponent(name)}/${encodeURIComponent(caseId)}/${encodeURIComponent(maId)}/${encodeURIComponent(patientId)}`;
+    return Network("POST", path, payload, false);
+  };
+
   static getAvailableTimeSlots = (
     providerId: number | string,
     location: string,
+    service: string,
+    visitType: string,
     date: string,
     startTime: string,
     caseId: string,
   ) => {
     return Network(
       "GET",
-      `available-time-slots?provider_id=${encodeURIComponent(providerId)}&location=${encodeURIComponent(location)}&date=${encodeURIComponent(date)}&start_time=${encodeURIComponent(startTime)}&case_id=${encodeURIComponent(caseId)}`,
+      `available-time-slots?provider_id=${encodeURIComponent(providerId)}&location=${encodeURIComponent(location)}&service=${encodeURIComponent(service)}&visit_type=${encodeURIComponent(visitType)}&date=${encodeURIComponent(date)}&case_id=${encodeURIComponent(caseId)}&start_time=${encodeURIComponent(startTime)}`,
     );
+  };
+
+  // Global holiday list (not case-scoped). Response: { success, data: [{ date, name }] }
+  // where `date` is a human string like "26 Dec 2026".
+  static getHolidays = () => {
+    return Network("GET", "holidays");
+  };
+
+  // Provider absence / leave blocks for a single date (not case-scoped). Response:
+  // { success, data: [{ provider_id, duration_type, calendar_label, start_time, end_time }] }.
+  static getVacationCalendarBlocks = (date: string) => {
+    return Network("GET", `vacations/calendar-blocks?date=${encodeURIComponent(date)}`);
   };
 
   static getTimeSlotDateRange = (
@@ -361,10 +426,17 @@ export default class Apis {
     svcDateStart: string,
     svcDateEnd: string,
     caseId: string,
+    // Optional: sending the visit type (and service) lets the backend return
+    // `duration_minutes` and apply capacity-aware booking for that visit type.
+    visitType?: string,
+    service?: string,
   ) => {
+    const extra =
+      (visitType ? `&visit_type=${encodeURIComponent(visitType)}` : "") +
+      (service ? `&service=${encodeURIComponent(service)}` : "");
     return Network(
       "GET",
-      `get-time-slots-date-range?provider_id=${encodeURIComponent(providerId)}&location=${encodeURIComponent(location)}&svc_date_start=${encodeURIComponent(svcDateStart)}&svc_date_end=${encodeURIComponent(svcDateEnd)}&case_id=${encodeURIComponent(caseId)}`,
+      `get-time-slots-date-range?provider_id=${encodeURIComponent(providerId)}&location=${encodeURIComponent(location)}&svc_date_start=${encodeURIComponent(svcDateStart)}&svc_date_end=${encodeURIComponent(svcDateEnd)}&case_id=${encodeURIComponent(caseId)}${extra}`,
     );
   };
 }

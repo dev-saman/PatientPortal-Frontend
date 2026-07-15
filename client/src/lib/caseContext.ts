@@ -41,6 +41,22 @@ const getTokenPatientIds = (token: string | null | undefined): string[] => {
 };
 
 /**
+ * Returns the logged-in user's primary patient_id from the JWT (the `patient_id`
+ * claim, not the multi-id `patient_ids` array). Used to build the
+ * appointment-schedule path segment. Empty string when unavailable.
+ */
+export const getActivePatientId = (): string => {
+  const token = localStorage.getItem("ahcs_token");
+  if (!token) return "";
+  try {
+    const payload = jwtDecode<Record<string, any>>(token);
+    return String(payload?.patient_id ?? payload?.patientId ?? "").trim();
+  } catch {
+    return "";
+  }
+};
+
+/**
  * Defense-in-depth guard for magic links. Returns false ONLY when the link's
  * patient_id is present, the token carries at least one patient_id, and the
  * link's patient_id is not among any of them.

@@ -30,12 +30,19 @@ const CASE_ID_EXEMPT_ENDPOINTS = [
   "download-patient-submited-form-pdf",
   // case_id and ma_id are sourced from the get-approved-preauth response and passed explicitly
   "check-sessions-completed",
+  // the preauth's case_id (may differ from the active case) and ma_id are passed explicitly
+  "notify-patient-preauth-missing-details",
   // case_id is sourced from the get-approved-preauth response and passed explicitly
   "get-time-slots-date-range",
   // case_id is sourced from the get-approved-preauth response and passed explicitly
   "available-time-slots",
   // case_id is passed explicitly as a query param alongside appt_id and ma_id
   "appointment-reschedule",
+  // global/provider-scoped reference data for the reschedule calendar — not case-scoped
+  "holidays",
+  "vacations/calendar-blocks",
+  // case_id (the preauth's, may differ from the active case) is passed explicitly as a path segment
+  "appointment-schedule",
 ];
 
 export const getActiveCaseId = (): string => {
