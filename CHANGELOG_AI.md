@@ -20,6 +20,28 @@ and notable configuration/docs changes.
 
 ## 2026-07-15
 
+### Schedule grid: lazy per-page loading (one date window at a time) instead of the whole pre-auth range
+- **What:** "Schedule Remaining Appointments" (`ScheduleAppointmentModal`) previously fetched the entire
+  pre-auth window (e.g. 07-14 → 12-31 ≈ 120 working days, ~78 kB) in one `get-time-slots-date-range`
+  call and paginated purely client-side. It now loads **one page's date window at a time**: page 1 =
+  `[max(today, svc_date_start) … +6 days]`, and each Next/Previous fetches the adjacent 7-calendar-day
+  window (which, since the backend omits weekends, is always the next/prev 5 working-day columns).
+  Fetched pages are cached (`pageCache` + `pageCacheRef`) so navigating back is instant and never
+  refetches. No backend change — the endpoint already accepts `svc_date_start`/`svc_date_end`, so a
+  narrow window is just passed per page.
+- **How:** Replaced the full-range `timeSlotDates` state + `useEffect` fetch with `scheduleRangeStart`
+  (memo), `loadPage(pageNum)` (`useCallback`, cached, computes the window & calls the range API),
+  `goToPage`, and a reset-effect that reloads page 1 when the query (location/provider/dates/visit-type/
+  speciality) changes. Pagination controls now use `hasPrevPage`/`hasNextPage` (derived from the window
+  math vs `svc_date_end`) instead of `totalPages`, and are disabled while a page is loading. Removed the
+  old client-side slicing (`DATES_PER_PAGE`, `totalPages`) and the "jump to the page containing today"
+  logic (page 1 now starts at today).
+- **Files/areas:** `client/src/components/ScheduleAppointmentModal.tsx` (`addDays`/`PAGE_WINDOW_DAYS`
+  helpers, page-cache state, `loadPage`/`goToPage`, reset effect, nav controls, empty-state check,
+  open-reset).
+- **Auth / case-scoping / patient-data:** None. Same endpoint, case-scoped as before; only the requested
+  date window narrowed. Backend already supports the date-range params, so no backend work needed.
+
 ### Reschedule: lunch slots show "– Lunch" again in the Start Time dropdown
 - **What:** After the Start options moved to `get-time-slots-date-range`, lunch slots (`type:"lunch"`)
   rendered as a plain time with no indicator (the range labels carry no "(Lunch)" suffix, unlike the old
