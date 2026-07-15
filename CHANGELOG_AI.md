@@ -20,6 +20,13 @@ and notable configuration/docs changes.
 
 ## 2026-07-15
 
+### Reschedule calendar: selected date can no longer be deselected
+- **What:** Added the `required` prop to the Reschedule `<Calendar>` (react-day-picker `mode="single"`).
+  Clicking the already-selected date now keeps it selected instead of toggling it off (the default
+  single-mode behaviour). A date is always selected once chosen.
+- **Files/areas:** `client/src/pages/Appointments.tsx` (reschedule `<Calendar>`).
+- **Auth / case-scoping / patient-data:** None.
+
 ### Schedule grid: a holiday closes the whole day, regardless of other-location schedule
 - **What:** In the "Schedule Remaining Appointments" grid (`ScheduleAppointmentModal`), a date flagged
   `is_holiday` now renders **"Holiday" in every row** (no time slots), taking precedence over per-slot

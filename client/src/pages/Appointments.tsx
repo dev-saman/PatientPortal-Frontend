@@ -1258,6 +1258,7 @@ export default function Appointments() {
                         >
                           <Calendar
                             mode="single"
+                            required
                             selected={
                               rescheduleDate && isValid(parse(rescheduleDate, "yyyy-MM-dd", new Date()))
                                 ? parse(rescheduleDate, "yyyy-MM-dd", new Date())
