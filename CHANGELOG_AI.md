@@ -20,6 +20,20 @@ and notable configuration/docs changes.
 
 ## 2026-07-15
 
+### Schedule grid: a holiday closes the whole day, regardless of other-location schedule
+- **What:** In the "Schedule Remaining Appointments" grid (`ScheduleAppointmentModal`), a date flagged
+  `is_holiday` now renders **"Holiday" in every row** (no time slots), taking precedence over per-slot
+  rendering. Previously only the slots the backend tagged `type:"holiday"` showed "Holiday", so on a
+  holiday where the provider is scheduled at a *different* location (e.g. Ennis 8:00–12:00), the Dallas
+  grid leaked the morning as greyed time cells (those Dallas slots are absent → rendered via the
+  `!slot` fallback) while the afternoon showed "Holiday". The whole column is now "Holiday" with a
+  `holiday_name` tooltip. Uses the date-level `DateSlots.is_holiday` flag already returned by
+  `get-time-slots-date-range`.
+- **Files/areas:** `client/src/components/ScheduleAppointmentModal.tsx` (day-cell render — day-level
+  holiday check before the slot lookup).
+- **Auth / case-scoping / patient-data:** None. Presentation-only; consumes the backend's existing
+  `is_holiday` flag. (The reschedule calendar already disables holiday dates, so it was unaffected.)
+
 ### Reschedule: show "Not Available" (not an error) when the provider isn't available at the location
 > Note: an earlier revision of this change removed Start/End pre-selection; that was reverted — the
 > modal again pre-selects the appointment's current start/end on open (still marked "– Current"). The

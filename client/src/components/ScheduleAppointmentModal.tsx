@@ -882,6 +882,24 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
                           const tdStyle: React.CSSProperties = { width: `${100 / pagedDates.length}%`, ...(isToday ? { background: "#fffde7" } : {}) };
                           const base = "block w-full rounded-[4px] border px-1 py-1 font-medium text-center leading-tight transition-colors";
 
+                          // A holiday closes the WHOLE day regardless of the provider's
+                          // schedule at any location — show "Holiday" in every row (no
+                          // time slots), so e.g. morning slots from another location's
+                          // schedule don't leak through as greyed times.
+                          if (d.is_holiday) {
+                            return (
+                              <td key={d.date} style={tdStyle}>
+                                <div
+                                  className={`${base} cursor-not-allowed`}
+                                  title={d.holiday_name || undefined}
+                                  style={{ background: "#fef2f2", color: "#dc3545", borderColor: "#f5c6cb", fontSize: "0.68rem", fontWeight: 600 }}
+                                >
+                                  Holiday
+                                </div>
+                              </td>
+                            );
+                          }
+
                           // Provider not available for this whole day → N/A cell for every row
                           if (d.slots.length === 0) {
                             return (
