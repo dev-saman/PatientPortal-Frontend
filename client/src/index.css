@@ -63,7 +63,10 @@
   --chart-4: oklch(0.5 0.12 260);
   --chart-5: oklch(0.3 0.1 260);
   
-  --radius: 0.75rem;
+  /* Base corner radius. Buttons/inputs use `rounded-md` = calc(--radius - 2px),
+     so 7px here gives them a 5px radius (was 12px → 10px). Scales the whole UI's
+     corners down proportionally: sm 3px / md 5px / lg 7px / xl 11px. */
+  --radius: 0.4375rem;
   
   /* Soft Tech Light Mode */
   --background: oklch(0.99 0.002 260);

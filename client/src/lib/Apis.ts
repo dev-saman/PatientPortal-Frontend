@@ -359,6 +359,28 @@ export default class Apis {
     );
   };
 
+  // Cancel one appointment. Path segments: user name / case_id / appt_id.
+  // Exempt from case_id auto-injection (see CASE_ID_EXEMPT_ENDPOINTS) since case_id
+  // is carried as a path segment (and in the body). Sent as JSON per the contract.
+  static cancelAppointment = (
+    name: string,
+    caseId: string | number,
+    apptId: string | number,
+    payload: {
+      attend_id: string | number;
+      ma_id: string | number;
+      case_id: string | number;
+      provider_id: string | number;
+      attend_date2: string;
+      attend_status: string;
+      attend_reason_id: string | number;
+      attend_notes: string;
+    },
+  ) => {
+    const path = `appointment-cancel/${encodeURIComponent(name)}/${encodeURIComponent(caseId)}/${encodeURIComponent(apptId)}`;
+    return Network("POST", path, payload, false);
+  };
+
   // Book one appointment. Path segments: user name / case_id / ma_id / patient_id.
   // Exempt from case_id auto-injection (see CASE_ID_EXEMPT_ENDPOINTS) since case_id
   // is carried as a path segment. Body keys match the backend contract exactly,

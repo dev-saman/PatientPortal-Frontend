@@ -20,6 +20,140 @@ and notable configuration/docs changes.
 
 ## 2026-07-15
 
+### Appointments: status badge is API-driven; Reschedule/Cancel shown only for a Scheduled appointment
+> **Key finding from the real `get-patient-appointments` payload:** `appt_status` is **hardcoded to
+> "Confirmed" on every row** — a cancelled visit returns `attend_status: "Cancelled"` *alongside*
+> `appt_status: "Confirmed"`. So `appt_status` is unusable as a status source; the real state is
+> **`attend_status`**. (`status` isn't returned at all.) Cancelled appointments **do** appear in
+> `upcoming_appointments`, so no backend change was needed.
+>
+> `attend_status` vocabulary (mixes codes and literals). Badge colour = a light tint of the matching
+> action button (Check In = yellow, Check Out = green, Cancel = red):
+> | state | `attend_status` | label | badge |
+> |---|---|---|---|
+> | Scheduled | `S` | **Confirmed** | light blue |
+> | Check-in | `CI` | Check In | light yellow |
+> | Check-out | `CO` / `1` | Check Out | light green |
+> | No Show | `NS` | No Show | light slate |
+> | Cancelled | `C` / `"Cancelled"` | Cancelled | light red |
+>
+> "Confirmed" **is** the Scheduled state — hence `MODIFIABLE_APPOINTMENT_STATUSES = {"Confirmed"}`
+> (only there are the actions enabled). `APPOINTMENT_STATUS_LABELS` normalises a code → label; a value
+> already sent as a literal (e.g. `"Cancelled"`) falls through unchanged.
+
+- **What:** Prepared the upcoming appointment card to reflect the appointment's real status.
+  (1) `APPOINTMENT_STATUS_STYLES` is no longer a **whitelist** — previously `renderAppointmentTag`
+  returned `null` for any value not in the map (only `Confirmed` / `Action Required`), so a status like
+  "Cancelled" or "Check In" would have rendered **no badge at all**. It is now a *styling* map with an
+  `UNKNOWN_STATUS_STYLE` fallback, so whatever status the API returns always renders (un-themed if
+  unrecognised). Added colours for Scheduled / Check In / Check Out / No Show / Cancelled / Rescheduled
+  (Cancelled = light red). `renderAppointmentTag` gained an optional `fallbackClassName` — the visit-type
+  tag keeps its hide-if-unmapped behaviour.
+  (2) Reschedule/Cancel are **disabled** (not hidden) unless the appointment is still modifiable, so every
+  card keeps the same height and the layout stays consistent. Each is wrapped in an `inline-flex` span that
+  carries `cursor-not-allowed` when disabled — the cursor can't live on the button itself because `Button`
+  sets `disabled:pointer-events-none`, so a disabled button receives no hover at all.
+- **Status logic is isolated** in two module-level knobs: `appointmentStatusOf(appointment)` (reads
+  `attend_status`, normalising code → label) and `MODIFIABLE_APPOINTMENT_STATUSES` (which statuses keep the
+  buttons). No status literals appear in the JSX. Added `attend_status` to the `Appointment` interface with
+  a comment warning that `appt_status` is always "Confirmed" and must not be used.
+- **Also:** the Reschedule modal's read-only "Visit Status" field read the same hardcoded `appt_status`;
+  it now uses `appointmentStatusOf(...)` so it shows the real state.
+- **Visit Summary modal fixed too:** its status pill was built from `appt_status` (always "Confirmed") with
+  an unconditionally **green dot** and no per-status colour — so a cancelled past visit read "Confirmed"
+  with a green dot, while the raw `Attend Status: S` field sat right below it. It now derives the label from
+  `attend_status` via `appointmentStatusOf`, tints the pill with `APPOINTMENT_STATUS_STYLES`
+  (`UNKNOWN_TAG_STYLE` fallback), and the dot uses `bg-current` so it inherits the status colour instead of
+  being hardcoded. `appt_status` and `attend_status` are now in `HIDDEN_KEYS` (the former is misleading, the
+  latter redundant now the badge shows a proper label). `appointmentStatusOf` was loosened to accept
+  `{ attend_status?: string | null }` so the loosely-typed `selectedVisit` can use it without a cast.
+- **Visit-type badge made dynamic too:** `APPOINTMENT_VISIT_TYPE_STYLES` was likewise a whitelist
+  (`In-Person`/`Telehealth`), so any other `is_virtual_text` rendered no badge. It now passes the shared
+  `UNKNOWN_TAG_STYLE` fallback, so whatever the API returns always renders (added a `Virtual` colour).
+  `UNKNOWN_STATUS_STYLE` renamed → `UNKNOWN_TAG_STYLE` since both badges share it.
+- **Backend audit note:** `get-patient-appointments` could not be verified from source — it doesn't exist in
+  the local `Medhiwa-23` repo (no route/controller; `appt_status` appears 0 times); it lives in the separate
+  `adm.advantagehcs.com` codebase, not available locally (a live call returned 401 — expired token). Settled
+  from the real payload supplied by the developer instead.
+- **Files/areas:** `client/src/pages/Appointments.tsx` (`Appointment.attend_status`,
+  `APPOINTMENT_STATUS_LABELS`, status styles + fallback, `renderAppointmentTag`, `appointmentStatusOf`,
+  `MODIFIABLE_APPOINTMENT_STATUSES`, `canModifyAppointment`, card badge + buttons, Visit Status field).
+- **Auth / case-scoping / patient-data:** None (presentation only).
+
+### Appointments: Time/Location no longer split 50/50 on the upcoming appointment card
+- **What:** The Time + Location row was a `grid md:grid-cols-2` — a hard 50/50 split that pushed Location
+  far to the right regardless of content. It's now a `flex flex-wrap` with a **30px** horizontal gap
+  (`gap-x-[30px]`), so Location sits just after the Date/Time. The rest of the card's spacing/sizing is
+  unchanged. (An interim revision also compacted the card's padding/type scale; that was reverted at the
+  developer's request — only the Time/Location layout change remains.)
+- **Files/areas:** `client/src/pages/Appointments.tsx` (upcoming appointment card). The Past list uses a
+  separate row layout and was left unchanged.
+- **Auth / case-scoping / patient-data:** None (presentation only).
+
+### UI: smaller corner radius app-wide; Cancel modal simplified to header / reason / footer
+- **What:** (1) **Radius** — lowered the base `--radius` token from `0.75rem` (12px) to `0.4375rem` (7px)
+  in `index.css`. Buttons/inputs use `rounded-md` = `calc(--radius - 2px)`, so they go from **10px → 5px**;
+  everything else scales down proportionally (sm 3px / md 5px / lg 7px / xl 11px). Done via the token
+  rather than per-component so the whole UI stays consistent. (2) **Cancel modal** — removed the read-only
+  **Date / Time / Location** fields; it's now just a bordered header (title + close icon), the "Reason for
+  Cancellation" dropdown (+ "Please specify the reason" when Other), and a bordered footer holding
+  **Keep Appointment** / **Cancel Appointment**. The footer moved outside the body block so it renders as a
+  proper modal footer.
+- **Files/areas:** `client/src/index.css` (`--radius`), `client/src/pages/Appointments.tsx` (Cancel modal).
+- **Auth / case-scoping / patient-data:** None (presentation only).
+
+### Appointments: add a Cancel button + cancel flow (with the same 24h restriction), restyle action buttons
+- **What:** Added a **Cancel** button beside **Reschedule** on each upcoming appointment card (replacing the
+  commented-out Cancel placeholder). Both keep the subtle `variant="outline"` (white) style and gained
+  icons: Reschedule a calendar icon, Cancel an ✕ icon plus a destructive tint
+  (`text-destructive border-destructive/30 hover:bg-destructive/10`) — using the design-system token rather
+  than a hardcoded red. (An interim version used solid amber/red buttons; reverted as too bright and
+  off-palette.) The Cancel modal's confirm button uses the maroon primary
+  (`bg-primary hover:bg-primary/90`), matching the Schedule Appointment button.
+  Clicking Cancel enforces the **same 24-hour rule as Reschedule** — an appointment
+  less than 24h away shows a "Cannot Cancel This Appointment" restriction modal (`BookingTooSoonModal`
+  with cancel copy) and never opens the form. Otherwise a Cancel modal opens showing a read-only summary
+  (date / time / location) plus a required **"Reason for Cancellation"** dropdown (reusing
+  `get-appointment-reasons`) and the **"Please specify the reason"** free-text when "Other" is selected —
+  mirroring the Reschedule modal's inline field validation. Submitting calls the cancel API, toasts, closes
+  and refreshes the list.
+- **API:** New `Apis.cancelAppointment(name, caseId, apptId, payload)` →
+  `POST appointment-cancel/{user_name}/{case_id}/{appt_id}` with a JSON body (`attend_id`, `ma_id`,
+  `case_id`, `provider_id`, `attend_date2`, `attend_status: "Cancelled"`, `attend_reason_id`,
+  `attend_notes`), mirroring `scheduleAppointment`'s path-segment style. `user_name` comes from
+  `useAuth()`'s `user.name`; `ma_id`/`provider_id` from the `get-appointment` detail. Added
+  `appointment-cancel` to `CASE_ID_EXEMPT_ENDPOINTS` since `case_id` is already a path segment + body field.
+- **Files/areas:** `client/src/lib/Apis.ts` (`cancelAppointment`), `client/src/lib/api.ts`
+  (case_id exemption), `client/src/pages/Appointments.tsx` (cancel state, `openCancelModal` /
+  `handleCancelSubmit`, Cancel modal, action buttons, cancel too-soon copy, `useAuth`).
+- **Auth / case-scoping / patient-data:** Case-scoped via `getActiveCaseId()` (passed explicitly as a path
+  segment + body field, hence the exemption). No new auth surface. The backend remains authoritative on
+  cancellation; the 24h check is immediate UX feedback only.
+
+### Schedule: 24h advance-booking rule now backend-owned — slots render "Not Available" instead of a modal
+- **What:** The backend now returns slots inside the 24-hour window as
+  `{ type: "not_available", disabled: true, reason: "Requires 24 hours advance booking" }`, so the
+  frontend no longer duplicates the rule. In `ScheduleAppointmentModal`: removed the client-side lead-time
+  check in `handleSlotClick`, the `MIN_LEAD_HOURS` constant, the `showTooSoonModal` state and the
+  `BookingTooSoonModal` render/import — picking such a slot no longer pops "Cannot Book This Time Slot"
+  (they're `disabled`, so they aren't clickable at all). `not_available` / `unavailable` slots now render
+  as **"&lt;time&gt; – Not Available"** (previously a generic "⚠ N/A"), matching the booked/blocked style, with
+  the backend's `reason` surfaced only as a hover tooltip.
+- **Reschedule modal (same treatment):** its Start dropdown now sources options from the same
+  `get-time-slots-date-range` endpoint, so (a) added `not_available` / `unavailable` to
+  `OCCUPIED_SLOT_TYPES` — those slots show "– Not Available" and are unselectable (also excluded as
+  ends) instead of appearing as a plain greyed time; and (b) removed the client-side 24h check in
+  `handleRescheduleStartChange`, which previously popped `BookingTooSoonModal` on picking a too-soon
+  start (now impossible — the backend marks them `disabled`).
+- **Files/areas:** `client/src/components/ScheduleAppointmentModal.tsx` (lead-time check, modal/state/
+  constant removal, `not_available` cell render); `client/src/pages/Appointments.tsx`
+  (`OCCUPIED_SLOT_TYPES`, `handleRescheduleStartChange`, submit-guard comment).
+- **Auth / case-scoping / patient-data:** None. Moves a business rule from the frontend to the backend
+  (thin-frontend); the backend remains authoritative and `appointment-schedule` still validates on submit.
+  The "Appointments can only be booked at least 24 hours in advance." info note is kept as context for why
+  those slots are unavailable. `BookingTooSoonModal` is still used by the Reschedule flow (it guards
+  *opening* the modal for an appointment that is itself &lt;24h away — a separate rule).
+
 ### Schedule grid: block-based lazy loading with background prefetch (fewer calls, no loading screen on navigation)
 - **What:** "Schedule Remaining Appointments" (`ScheduleAppointmentModal`) previously fetched the entire
   pre-auth window (~120 working days, ~78 kB) in one call and paginated client-side. It now fetches in

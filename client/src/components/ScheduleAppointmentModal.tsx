@@ -14,7 +14,6 @@ import { getActivePatientId } from "@/lib/caseContext";
 import { getApiErrorMessage } from "@/lib/apiError";
 import { formatDate } from "@/lib/utils";
 import type { PreauthRecord } from "@/components/SelectPreauthorizationModal";
-import BookingTooSoonModal from "@/components/BookingTooSoonModal";
 import SlotTooShortModal from "@/components/SlotTooShortModal";
 
 interface Department {
@@ -58,12 +57,6 @@ const eqCi = (a: unknown, b: unknown): boolean => {
 // Default appointment length (minutes) used when the backend does not return a
 // visit-type `duration_minutes` (e.g. no visit type resolved yet).
 const DEFAULT_DURATION_MIN = 60;
-
-// Minimum lead time (hours) before an appointment slot may be booked. This is a
-// backend business rule (appointment-schedule rejects slots < 24h away with
-// "The attend date and time must be at least 24 hours from now."); mirrored here
-// only to give the patient immediate feedback. The backend remains authoritative.
-const MIN_LEAD_HOURS = 24;
 
 // Non-standard short day names to mirror the Medhiwa reference grid headers.
 const SHORT_DAY = ["Sun", "Mon", "Tues", "Wed", "Thurs", "Fri", "Sat"];
@@ -188,8 +181,6 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
   // True while the Schedule button is submitting the booking(s)
   const [submitting, setSubmitting] = useState(false);
 
-  // Shown when the patient tries to select a slot less than MIN_LEAD_HOURS away.
-  const [showTooSoonModal, setShowTooSoonModal] = useState(false);
 
   // Set when the patient picks a slot without enough continuous availability for the
   // required appointment length (null = closed). Holds the labels for the message.
@@ -357,7 +348,6 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
     setTimeSlotsError(null);
     setSelectedByDay({});
     setSessionLimit(0);
-    setShowTooSoonModal(false);
     setTooShortInfo(null);
     setIsModalLoading(true);
 
@@ -591,15 +581,9 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
       });
       return;
     }
-    // Enforce the minimum lead time before allowing a new selection. The backend
-    // owns this rule; this is immediate UX feedback so the patient can't pick a
-    // slot the schedule API would reject.
-    const slotAt = new Date(`${date}T00:00:00`);
-    slotAt.setMinutes(slotAt.getMinutes() + timeToMinutes(slot.time));
-    if (slotAt.getTime() - Date.now() < MIN_LEAD_HOURS * 60 * 60 * 1000) {
-      setShowTooSoonModal(true);
-      return;
-    }
+    // NOTE: the 24h minimum lead time is enforced by the backend — it returns those
+    // slots as `type: "not_available"` / `disabled: true` (with a `reason`), so they
+    // render as "Not Available" and are never clickable. No client-side check needed.
     if (!existing && (sessionLimit <= 0 || selectedCount >= sessionLimit)) {
       toast.warning("Session limit reached. Cannot select more appointments.");
       return;
@@ -1060,11 +1044,19 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
                               </td>
                             );
                           }
+                          // Backend-owned unavailability (incl. the 24h advance-booking
+                          // rule, which arrives as type "not_available" + a `reason`).
+                          // Shown generically as "<time> – Not Available"; the backend's
+                          // reason is surfaced on hover only.
                           if (slot.type === "not_available" || slot.type === "unavailable") {
                             return (
                               <td key={d.date} style={tdStyle}>
-                                <div className={`${base} cursor-not-allowed flex items-center justify-center gap-1`} style={{ background: "#f8f9fa", color: "#adb5bd", borderColor: "#e9ecef", fontSize: "0.7rem", opacity: 0.85 }}>
-                                  <UserX className="h-3 w-3" /> N/A
+                                <div
+                                  className={`${base} cursor-not-allowed truncate`}
+                                  title={slot.reason || `${time} – Not Available`}
+                                  style={{ background: "#f8f9fa", color: "#adb5bd", borderColor: "#e9ecef", fontSize: "0.72rem" }}
+                                >
+                                  {time} – Not Available
                                 </div>
                               </td>
                             );
@@ -1171,7 +1163,6 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
         </div>
       </DialogContent>
 
-      <BookingTooSoonModal open={showTooSoonModal} onClose={() => setShowTooSoonModal(false)} />
       <SlotTooShortModal
         open={tooShortInfo !== null}
         onClose={() => setTooShortInfo(null)}

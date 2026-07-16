@@ -13,6 +13,7 @@ import ScheduleAppointmentModal from "@/components/ScheduleAppointmentModal";
 import SelectPreauthorizationModal, { type PreauthRecord, preauthState } from "@/components/SelectPreauthorizationModal";
 import ActivationRequiredModal from "@/components/ActivationRequiredModal";
 import BookingTooSoonModal from "@/components/BookingTooSoonModal";
+import { useAuth } from "@/contexts/AuthContext";
 import SlotTooShortModal from "@/components/SlotTooShortModal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +48,10 @@ interface Appointment {
   attend_type?: string;
   status?: string;
   is_virtual_text?: string | null;
+  // The appointment's REAL status code from get-patient-appointments: "S"
+  // (scheduled) / "CI" / "CO" / "NS" / "Cancelled". Use this — NOT `appt_status`,
+  // which the API hardcodes to "Confirmed" on every row regardless of state.
+  attend_status?: string | null;
   appt_status?: string | null;
   // Pre-auth service window. When the appointment was booked against a pre-auth,
   // rescheduling is restricted to this range. `ext_date`, when present, extends
@@ -60,25 +65,64 @@ interface Appointment {
   made_via?: string | null;
 }
 
-const APPOINTMENT_STATUS_STYLES: Record<string, string> = {
-  Confirmed: "bg-blue-50 text-blue-700 border-blue-200",
-  "Action Required": "bg-amber-50 text-amber-700 border-amber-200",
+// Appointment status vocabulary — maps `attend_status` to the label shown on the card:
+//   state       attend_status   label
+//   Scheduled   S               Confirmed
+//   Check-in    CI              Check In
+//   Check-out   CO, 1           Check Out
+//   No Show     NS              No Show
+//   Cancelled   C, "Cancelled"  Cancelled
+// The API mixes codes and literals — a scheduled visit sends "S" while a cancelled
+// one sends "Cancelled" verbatim. Codes map to a label; anything already sent as a
+// label falls through unchanged (see `appointmentStatusOf`).
+const APPOINTMENT_STATUS_LABELS: Record<string, string> = {
+  S: "Confirmed",
+  CI: "Check In",
+  "Check-in": "Check In",
+  CO: "Check Out",
+  "1": "Check Out",
+  NS: "No Show",
+  C: "Cancelled",
 };
 
+// Colour per status label — a light tint of the matching action button's colour
+// (Check In = yellow, Check Out = green, Cancel = red, …). This is a *styling* map
+// only, NOT a whitelist: any status the API returns is still rendered, falling back
+// to UNKNOWN_TAG_STYLE, so a new/renamed backend status shows up (un-themed)
+// instead of vanishing.
+const APPOINTMENT_STATUS_STYLES: Record<string, string> = {
+  Confirmed: "bg-blue-50 text-blue-700 border-blue-200",
+  "Check In": "bg-yellow-50 text-yellow-700 border-yellow-200",
+  "Check Out": "bg-green-50 text-green-700 border-green-200",
+  "No Show": "bg-slate-100 text-slate-700 border-slate-300",
+  Cancelled: "bg-red-50 text-red-700 border-red-200",
+  "Action Required": "bg-amber-50 text-amber-700 border-amber-200",
+};
+// Colour per visit type (`is_virtual_text`). Like the status map above this is a
+// *styling* map, not a whitelist — an unmapped value still renders via
+// UNKNOWN_TAG_STYLE rather than dropping the badge.
 const APPOINTMENT_VISIT_TYPE_STYLES: Record<string, string> = {
   "In-Person": "bg-purple-50 text-purple-700 border-purple-200",
   Telehealth: "bg-green-50 text-green-700 border-green-200",
+  Virtual: "bg-green-50 text-green-700 border-green-200",
 };
 
+// Neutral fallback for any status / visit-type value we have no specific colour
+// for, so the badge shows what the API returned instead of vanishing.
+const UNKNOWN_TAG_STYLE = "bg-muted text-muted-foreground border-border";
+
+// Renders a value as a badge. Without `fallbackClassName` an unmapped value is
+// hidden (used for the visit-type tag); with one, it always renders (status tag).
 const renderAppointmentTag = (
   value: string | null | undefined,
-  stylesMap: Record<string, string>
+  stylesMap: Record<string, string>,
+  fallbackClassName?: string,
 ) => {
   if (!value) return null;
   const normalizedValue = value.trim();
   if (!normalizedValue) return null;
 
-  const tagClassName = stylesMap[normalizedValue];
+  const tagClassName = stylesMap[normalizedValue] ?? fallbackClassName;
   if (!tagClassName) return null;
 
   return (
@@ -87,6 +131,27 @@ const renderAppointmentTag = (
     </Badge>
   );
 };
+
+// The appointment's live status as a patient-facing label.
+//
+// Reads `attend_status` — the only field carrying the real state. Note the API's
+// `appt_status` is hardcoded to "Confirmed" on every row (verified against a live
+// payload: a cancelled visit still returns appt_status "Confirmed" alongside
+// attend_status "Cancelled"), so it must not be used here. `status` isn't returned
+// at all. Codes are normalised to their label; a value already sent as a label
+// (e.g. "Cancelled") passes straight through.
+const appointmentStatusOf = (appointment: { attend_status?: string | null }): string => {
+  const raw = (appointment.attend_status || "").trim();
+  return APPOINTMENT_STATUS_LABELS[raw] ?? raw;
+};
+
+// Only a still-Scheduled appointment can be rescheduled/cancelled. Scheduled (code
+// `S`) surfaces to the patient as "Confirmed" — every other state (In Progress /
+// Attended / Not Attended / Cancelled) is terminal or in-flight, so no actions.
+const MODIFIABLE_APPOINTMENT_STATUSES = new Set(["Confirmed"]);
+
+const canModifyAppointment = (appointment: Appointment): boolean =>
+  MODIFIABLE_APPOINTMENT_STATUSES.has(appointmentStatusOf(appointment));
 
 // Format time to 12-hour format with AM/PM
 const formatTime = (timeString: string): string => {
@@ -196,6 +261,10 @@ const RESCHEDULE_TOO_SOON_TITLE = "Cannot Reschedule This Appointment";
 const RESCHEDULE_TOO_SOON_MESSAGE =
   "Appointments can only be rescheduled at least 24 hours in advance. If you still need to reschedule this appointment, please contact the support team for assistance.";
 
+const CANCEL_TOO_SOON_TITLE = "Cannot Cancel This Appointment";
+const CANCEL_TOO_SOON_MESSAGE =
+  "Appointments can only be cancelled at least 24 hours in advance. If you still need to cancel this appointment, please contact the support team for assistance.";
+
 // True when the given date (yyyy-MM-dd) + start time (HH:MM) is less than
 // MIN_LEAD_HOURS from now, i.e. too soon to reschedule to.
 const isRescheduleTooSoon = (dateYmd: string, startHHMM: string): boolean => {
@@ -237,14 +306,18 @@ const withCurrentRange = (
   return marked;
 };
 
-// Occupied slot types (booked / cross-location booked / blocked / cross-location
-// blocked). Mirrors ScheduleAppointmentModal: the patient must not learn whether a
-// slot is booked, blocked, or booked at another location.
+// Slot types the patient can't book, all surfaced generically as "– Not Available":
+// booked / cross-location booked / blocked, plus the backend's `not_available`
+// (which covers backend-owned rules such as the 24h advance-booking minimum).
+// Mirrors ScheduleAppointmentModal: the patient must not learn whether a slot is
+// booked, blocked, booked at another location, or blocked by a booking rule.
 const OCCUPIED_SLOT_TYPES = new Set([
   "booked",
   "cross_location_booked",
   "blocked",
   "blocked_cross_location",
+  "not_available",
+  "unavailable",
 ]);
 
 // Display label for a Start/End time option. The appointment's own slot is shown as
@@ -402,6 +475,7 @@ const fetchRescheduleStartsForDate = async (
 };
 
 export default function Appointments() {
+  const { user } = useAuth();
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   // Active preauthorizations for the current case. Fetched on demand when the
   // Schedule button is clicked (not on load) so the page mounts faster. Every
@@ -441,6 +515,16 @@ export default function Appointments() {
   const [rescheduleStartOptions, setRescheduleStartOptions] = useState<SlotOption[]>([]);
   const [rescheduleSlotsLoading, setRescheduleSlotsLoading] = useState(false);
   const [showRescheduleTooSoon, setShowRescheduleTooSoon] = useState(false);
+  // ── Cancel appointment flow ──
+  const [isCancelOpen, setIsCancelOpen] = useState(false);
+  const [cancelAppointmentRow, setCancelAppointmentRow] = useState<Appointment | null>(null);
+  const [cancelDetail, setCancelDetail] = useState<AppointmentDetail | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelOtherReason, setCancelOtherReason] = useState("");
+  const [cancelErrors, setCancelErrors] = useState<{ reason?: string; otherReason?: string }>({});
+  const [isCancelLoading, setIsCancelLoading] = useState(false);
+  const [isCancelSubmitting, setIsCancelSubmitting] = useState(false);
+  const [showCancelTooSoon, setShowCancelTooSoon] = useState(false);
   // Non-null while the "selected start can't fit the required duration" modal is
   // shown (e.g. picking a start that overlaps a later booking). Mirrors the
   // booking flow's tooShortInfo pattern.
@@ -616,11 +700,9 @@ export default function Appointments() {
   // Start time changed: set End = Start + the appointment's required duration, and
   // reject the pick if that full span isn't available (overlaps a later booking).
   const handleRescheduleStartChange = async (value: string) => {
-    // Block selecting a slot less than 24h away; keep the previous selection.
-    if (value && isRescheduleTooSoon(rescheduleDate, value)) {
-      setShowRescheduleTooSoon(true);
-      return;
-    }
+    // NOTE: the 24h minimum lead time is enforced by the backend — it returns those
+    // slots as `type: "not_available"` / `disabled: true`, so they render as
+    // "– Not Available" and can't be picked. No client-side check / modal needed.
     const detail = appointmentDetail;
     if (!detail || !rescheduleDate || !value) {
       // Cleared back to the "Select Start Time" placeholder → clear the derived End.
@@ -743,9 +825,9 @@ export default function Appointments() {
   };
 
   const handleRescheduleSubmit = async () => {
-    // Defensive 24h lead-time re-check: the too-soon appointment is already blocked
-    // at open, and slot selection is guarded, but this covers a newly picked date/time
-    // that lands less than 24h away before submit.
+    // Defensive 24h lead-time re-check. The backend already excludes <24h slots from
+    // the options, so this only catches a stale modal — one left open long enough that
+    // an already-picked start has since fallen inside the 24h window.
     if (isRescheduleTooSoon(rescheduleDate, rescheduleStartTime)) {
       setShowRescheduleTooSoon(true);
       return;
@@ -799,6 +881,96 @@ export default function Appointments() {
       toast.error(getApiErrorMessage(error));
     } finally {
       setIsRescheduleSubmitting(false);
+    }
+  };
+
+  // Open the Cancel modal. Enforces the same 24h lead time as Reschedule up front:
+  // an appointment less than 24h away can't be cancelled here, so show the
+  // restriction modal instead of opening (better UX than opening then blocking).
+  const openCancelModal = async (appointment: Appointment) => {
+    const apptStart = appointment.time ? appointment.time.substring(0, 5) : "";
+    if (isRescheduleTooSoon(formatDateInput(appointment.attend_date), apptStart)) {
+      setShowCancelTooSoon(true);
+      return;
+    }
+    setCancelAppointmentRow(appointment);
+    setCancelDetail(null);
+    setCancelReason("");
+    setCancelOtherReason("");
+    setCancelErrors({});
+    setRescheduleReasons([]);
+    setIsCancelLoading(true);
+    setIsCancelOpen(true);
+    try {
+      const [apptRes, reasonsRes] = await Promise.all([
+        Apis.getAppointment(appointment.id),
+        Apis.getAppointmentReasons(),
+      ]);
+      // The detail fetch supplies the submit-only identifiers (ma_id, provider_id).
+      if (apptRes.success) {
+        const detail: AppointmentDetail | undefined = Array.isArray(apptRes.data)
+          ? apptRes.data[0]
+          : (apptRes.data as AppointmentDetail | undefined);
+        if (detail) setCancelDetail(detail);
+        else toast.error(apptRes.message || apptRes.error || "Failed to load appointment details.");
+      } else {
+        toast.error(apptRes.message || apptRes.error || "Failed to load appointment details.");
+      }
+      if (reasonsRes.success && Array.isArray(reasonsRes.data)) {
+        setRescheduleReasons(reasonsRes.data);
+      } else {
+        toast.error(reasonsRes.message || reasonsRes.error || "Failed to load cancellation reasons.");
+      }
+    } catch (error) {
+      toast.error(getApiErrorMessage(error));
+    } finally {
+      setIsCancelLoading(false);
+    }
+  };
+
+  const closeCancelModal = () => setIsCancelOpen(false);
+
+  const handleCancelSubmit = async () => {
+    if (!cancelDetail || !cancelAppointmentRow) return;
+
+    const selectedReasonObj = rescheduleReasons.find((r) => String(r.id) === cancelReason);
+    const isOther = (selectedReasonObj?.reason ?? "").trim().toLowerCase() === "other";
+
+    // Field-level validation shown inline under each field (not as a toast).
+    const errors: { reason?: string; otherReason?: string } = {};
+    if (!selectedReasonObj) errors.reason = "Please select a reason for cancelling.";
+    if (isOther && !cancelOtherReason.trim()) {
+      errors.otherReason = "Please specify the reason for cancelling.";
+    }
+    setCancelErrors(errors);
+    if (errors.reason || errors.otherReason || !selectedReasonObj) return;
+
+    const attendNotes = isOther ? cancelOtherReason.trim() : selectedReasonObj.reason;
+    const caseId = getActiveCaseId();
+    setIsCancelSubmitting(true);
+    try {
+      const res = await Apis.cancelAppointment(user?.name ?? "", caseId, cancelDetail.id, {
+        attend_id: cancelDetail.id,
+        ma_id: cancelDetail.ma_id,
+        case_id: caseId,
+        provider_id: cancelDetail.provider_id,
+        attend_date2: formatDateInput(cancelDetail.attend_date),
+        attend_status: "Cancelled",
+        attend_reason_id: selectedReasonObj.id,
+        attend_notes: attendNotes,
+      });
+
+      if (res.success === false) {
+        toast.error(res.message || res.error || "Failed to cancel appointment.");
+      } else {
+        toast.success("Appointment cancelled successfully.");
+        closeCancelModal();
+        refreshUpcomingAppointments();
+      }
+    } catch (error) {
+      toast.error(getApiErrorMessage(error));
+    } finally {
+      setIsCancelSubmitting(false);
     }
   };
 
@@ -982,6 +1154,7 @@ export default function Appointments() {
             <>
               {upcomingAppointments.slice(0, displayedUpcomingCount).map((appointment, index) => {
                 const duration = calculateDuration(appointment.time, appointment.end_time);
+                const canModify = canModifyAppointment(appointment);
                 const isVirtual =
                   appointment.is_virtual_text?.toLowerCase() === "telehealth" ||
                   appointment.attend_type?.toLowerCase().includes("virtual") ||
@@ -989,7 +1162,7 @@ export default function Appointments() {
 
                 return (
                   <Card key={appointment.id || index} className="shadow-soft border-l-4 border-l-primary">
-                    <CardContent className="p-6">
+                    <CardContent className="px-6">
                       <div className="flex flex-col md:flex-row gap-6">
                         <div className="flex-shrink-0 flex flex-col items-center justify-center bg-secondary/50 rounded-xl p-4 w-full md:w-32 text-center">
                           <span className="text-sm font-bold text-primary uppercase tracking-wider">
@@ -1007,8 +1180,16 @@ export default function Appointments() {
                           <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
                             <div>
                               <div className="flex items-center gap-2 mb-1">
-                                {renderAppointmentTag(appointment.appt_status, APPOINTMENT_STATUS_STYLES)}
-                                {renderAppointmentTag(appointment.is_virtual_text, APPOINTMENT_VISIT_TYPE_STYLES)}
+                                {renderAppointmentTag(
+                                  appointmentStatusOf(appointment),
+                                  APPOINTMENT_STATUS_STYLES,
+                                  UNKNOWN_TAG_STYLE,
+                                )}
+                                {renderAppointmentTag(
+                                  appointment.is_virtual_text,
+                                  APPOINTMENT_VISIT_TYPE_STYLES,
+                                  UNKNOWN_TAG_STYLE,
+                                )}
                               </div>
                               <h3 className="text-xl font-bold">
                                 {appointment.service_full_name} {appointment.attend_type_full_name}
@@ -1017,7 +1198,9 @@ export default function Appointments() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                          {/* Time + Location sit next to each other (30px apart) rather than
+                              in a 50/50 grid, which pushed Location far from the time. */}
+                          <div className="flex flex-wrap items-center gap-y-1 gap-x-[30px] text-sm">
                             <div className="flex items-center gap-3">
                               <Clock className="h-4 w-4 text-muted-foreground" />
                               <span>
@@ -1039,17 +1222,36 @@ export default function Appointments() {
                             </div>
                           </div>
 
-
+                          {/* Only a still-scheduled appointment can be changed. For a
+                              cancelled / checked-in / no-show visit the actions stay
+                              rendered but disabled, so every card keeps the same height.
+                              The cursor lives on the wrapper because Button sets
+                              `disabled:pointer-events-none` — a disabled button receives
+                              no hover, so it can't show a cursor itself. */}
                           <div className="flex flex-wrap gap-3 pt-2">
-                            {/* <Button className="bg-primary hover:bg-primary/90">
-                            eCheck-In
-                          </Button> */}
-                            <Button variant="outline" onClick={() => openRescheduleModal(appointment)}>
-                              Reschedule
-                            </Button>
-                            {/* <Button variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10">
-                            Cancel
-                          </Button> */}
+                            <span className={cn("inline-flex", !canModify && "cursor-not-allowed")}>
+                              <Button
+                                variant="outline"
+                                disabled={!canModify}
+                                onClick={() => openRescheduleModal(appointment)}
+                              >
+                                <CalendarDays className="h-4 w-4" />
+                                Reschedule
+                              </Button>
+                            </span>
+                            {/* Same subtle outline style; a destructive tint (design-system
+                                token, not a hardcoded red) marks it as the cancel action. */}
+                            <span className={cn("inline-flex", !canModify && "cursor-not-allowed")}>
+                              <Button
+                                variant="outline"
+                                disabled={!canModify}
+                                onClick={() => openCancelModal(appointment)}
+                                className="text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+                              >
+                                <X className="h-4 w-4" />
+                                Cancel
+                              </Button>
+                            </span>
                           </div>
 
                         </div>
@@ -1253,7 +1455,7 @@ export default function Appointments() {
                       <label className="text-sm font-medium text-muted-foreground">Visit Status</label>
                       <input
                         readOnly
-                        value={rescheduleAppointment.appt_status || rescheduleAppointment.status || "—"}
+                        value={appointmentStatusOf(rescheduleAppointment) || "—"}
                         className="h-10 rounded-md border border-input bg-muted px-3 text-sm text-foreground cursor-default focus:outline-none focus:ring-0"
                       />
                     </div>
@@ -1514,8 +1716,17 @@ export default function Appointments() {
 
           <div className="py-4 overflow-auto">
             {selectedVisit && (() => {
-              const TOP_KEYS = ["appt_status", "is_virtual_text", "department"];
-              const HIDDEN_KEYS = ["id", "ma_id", "provider_id", "is_virtual", "clinical_note"];
+              // The status badge comes from `attend_status` (the real state), NOT
+              // `appt_status` — the API hardcodes that to "Confirmed" on every row,
+              // so it would label a cancelled visit "Confirmed".
+              const statusLabel = appointmentStatusOf({
+                attend_status: selectedVisit.attend_status as string | null | undefined,
+              });
+              const TOP_KEYS = ["is_virtual_text", "department"];
+              // `appt_status` is hidden (always "Confirmed", misleading); `attend_status`
+              // is hidden because the status badge above now shows it as a proper label
+              // rather than the raw code ("S").
+              const HIDDEN_KEYS = ["id", "ma_id", "provider_id", "is_virtual", "clinical_note", "appt_status", "attend_status"];
               const topEntries = TOP_KEYS
                 .map((k) => ({ key: k, value: selectedVisit[k] }))
                 .filter(({ value }) => value !== null && value !== undefined && value !== "");
@@ -1523,16 +1734,26 @@ export default function Appointments() {
 
               return (
                 <>
-                  {topEntries.length > 0 && (
+                  {(statusLabel || topEntries.length > 0) && (
                     <div className="flex flex-wrap gap-2 mb-5">
+                      {statusLabel && (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-sm font-medium",
+                            APPOINTMENT_STATUS_STYLES[statusLabel] ?? UNKNOWN_TAG_STYLE,
+                          )}
+                        >
+                          {/* bg-current: the dot inherits the status tint, so it can't
+                              go stale the way the previously hardcoded green one did. */}
+                          <span className="w-2 h-2 rounded-full bg-current opacity-70 flex-shrink-0" />
+                          {statusLabel}
+                        </span>
+                      )}
                       {topEntries.map(({ key, value }) => (
                         <span
                           key={key}
                           className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-border bg-background text-sm font-medium text-foreground"
                         >
-                          {key === "appt_status" && (
-                            <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                          )}
                           {String(value)}
                         </span>
                       ))}
@@ -1577,12 +1798,133 @@ export default function Appointments() {
         title={RESCHEDULE_TOO_SOON_TITLE}
         message={RESCHEDULE_TOO_SOON_MESSAGE}
       />
+      {/* 24h lead-time guard for cancelling (mirrors the reschedule flow) */}
+      <BookingTooSoonModal
+        open={showCancelTooSoon}
+        onClose={() => setShowCancelTooSoon(false)}
+        title={CANCEL_TOO_SOON_TITLE}
+        message={CANCEL_TOO_SOON_MESSAGE}
+      />
       <SlotTooShortModal
         open={slotTooShortInfo !== null}
         onClose={() => setSlotTooShortInfo(null)}
         availableLabel={slotTooShortInfo?.available ?? ""}
         requiredLabel={slotTooShortInfo?.required ?? ""}
       />
+
+      {/* Cancel Appointment modal */}
+      <Dialog open={isCancelOpen} onOpenChange={(o) => { if (!o) closeCancelModal(); }}>
+        <DialogContent
+          showCloseButton={false}
+          className="!max-w-[560px] w-[90%] p-5 gap-0"
+          onAnimationEnd={() => { if (!isCancelOpen) { setCancelAppointmentRow(null); setCancelDetail(null); } }}
+        >
+          <DialogHeader className="pb-4 border-b border-border min-h-auto">
+            <div className="flex items-center justify-between w-full">
+              <DialogTitle className="text-xl font-semibold">
+                Cancel Appointment
+                {cancelAppointmentRow && (
+                  <span className="font-normal text-muted-foreground">
+                    {" – "}{cancelAppointmentRow.provider_name}
+                  </span>
+                )}
+              </DialogTitle>
+              <button
+                onClick={closeCancelModal}
+                className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </DialogHeader>
+
+          {isCancelLoading ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            cancelAppointmentRow && (
+              <div className="py-5 space-y-5">
+                {/* Reason for Cancellation */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-muted-foreground">
+                    Reason for Cancellation <span className="text-destructive">*</span>
+                  </label>
+                  <select
+                    value={cancelReason}
+                    onChange={(e) => {
+                      setCancelReason(e.target.value);
+                      setCancelErrors((prev) => ({ ...prev, reason: undefined }));
+                      const picked = rescheduleReasons.find((r) => String(r.id) === e.target.value);
+                      if ((picked?.reason ?? "").trim().toLowerCase() !== "other") {
+                        setCancelOtherReason("");
+                        setCancelErrors((prev) => ({ ...prev, otherReason: undefined }));
+                      }
+                    }}
+                    className={cn(
+                      "h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-0 appearance-none",
+                      cancelErrors.reason && "border-destructive",
+                    )}
+                    style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}
+                  >
+                    <option value="">--Select Reason--</option>
+                    {rescheduleReasons.map((r) => (
+                      <option key={r.id} value={String(r.id)}>{r.reason}</option>
+                    ))}
+                  </select>
+                  {cancelErrors.reason && (
+                    <p className="text-xs text-destructive">{cancelErrors.reason}</p>
+                  )}
+                </div>
+
+                {/* Free-text reason, shown only when "Other" is selected */}
+                {(rescheduleReasons.find((r) => String(r.id) === cancelReason)?.reason ?? "")
+                  .trim().toLowerCase() === "other" && (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium text-muted-foreground">
+                      Please specify the reason <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={cancelOtherReason}
+                      onChange={(e) => {
+                        setCancelOtherReason(e.target.value);
+                        setCancelErrors((prev) => ({ ...prev, otherReason: undefined }));
+                      }}
+                      placeholder="Enter other reason..."
+                      className={cn(
+                        "h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0",
+                        cancelErrors.otherReason && "border-destructive",
+                      )}
+                    />
+                    {cancelErrors.otherReason && (
+                      <p className="text-xs text-destructive">{cancelErrors.otherReason}</p>
+                    )}
+                  </div>
+                )}
+
+              </div>
+            )
+          )}
+
+          {/* ── Modal footer ── */}
+          {!isCancelLoading && cancelAppointmentRow && (
+            <div className="pt-4 border-t border-border flex justify-end gap-3">
+              <Button variant="outline" onClick={closeCancelModal} disabled={isCancelSubmitting}>
+                Keep Appointment
+              </Button>
+              <Button
+                className="bg-primary hover:bg-primary/90"
+                disabled={isCancelSubmitting || !cancelDetail}
+                onClick={handleCancelSubmit}
+              >
+                {isCancelSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                Cancel Appointment
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

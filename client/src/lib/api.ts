@@ -43,6 +43,8 @@ const CASE_ID_EXEMPT_ENDPOINTS = [
   "vacations/calendar-blocks",
   // case_id (the preauth's, may differ from the active case) is passed explicitly as a path segment
   "appointment-schedule",
+  // case_id is passed explicitly as a path segment (and in the body)
+  "appointment-cancel",
 ];
 
 export const getActiveCaseId = (): string => {
