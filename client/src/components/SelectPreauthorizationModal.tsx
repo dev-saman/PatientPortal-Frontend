@@ -54,7 +54,25 @@ export interface PreauthRecord {
   no_sessions?: number | null;         // total approved sessions
   sessions_remaining?: number | null;  // sessions still available (backend-computed)
   sessions_completed?: number | null;  // not currently returned; preferred when present
+  /**
+   * The patient's OWN appointments for THIS preauth, from `GET /get-approved-preauth`.
+   * Patient-scoped (unlike the anonymized booked slots in get-time-slots-date-range),
+   * so the scheduling modal uses `upcoming_appt` to mark dates the patient already
+   * booked. Times are 24h "HH:MM:SS"; `attend_date` is "YYYY-MM-DD".
+   */
+  appointments?: {
+    upcoming_appt?: PreauthAppointment[];
+    past_appt?: PreauthAppointment[];
+  };
   [key: string]: any;
+}
+
+/** One of the patient's booked appointments under a preauth. */
+export interface PreauthAppointment {
+  attend_date: string; // YYYY-MM-DD
+  time: string;        // 24h "HH:MM:SS"
+  end_time: string;    // 24h "HH:MM:SS"
+  attend_status?: string | null;
 }
 
 /**
@@ -171,6 +189,13 @@ export default function SelectPreauthorizationModal({ open, onClose, preauths, o
     }
   };
 
+  // Show schedulable ("Ready to schedule") preauths first so the actionable one is
+  // immediately visible. Array.sort is stable, so within each group the original order
+  // is preserved.
+  const orderedPreauths = [...preauths].sort(
+    (a, b) => (preauthState(a) === "ready" ? 0 : 1) - (preauthState(b) === "ready" ? 0 : 1),
+  );
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
@@ -196,7 +221,7 @@ export default function SelectPreauthorizationModal({ open, onClose, preauths, o
         </p>
 
         <div className="py-4 space-y-3 overflow-auto flex-1">
-          {preauths.map((p, index) => {
+          {orderedPreauths.map((p, index) => {
             const state = preauthState(p);
             const styles = STATE_STYLES[state];
             const usage = sessionUsage(p);

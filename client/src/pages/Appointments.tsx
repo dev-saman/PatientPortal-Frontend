@@ -4,6 +4,11 @@ import {
   MapPin,
   Video,
   CalendarDays,
+  CalendarClock,
+  CalendarCheck,
+  ArrowRight,
+  Stethoscope,
+  User,
   X,
   Loader2,
   Plus,
@@ -284,22 +289,15 @@ interface SlotOption {
   type: string;
 }
 
-// Tag every option in the appointment's own window [rangeStart, rangeEnd) as
-// `current` (selectable) so the whole current span reads "– Current" instead of
-// the anonymized "– Not Available" — the appointment's own booked slots come back
-// as `type:"booked"`. Ensures `rangeStart` is present even if the API omitted it.
-const withCurrentRange = (
-  options: SlotOption[],
-  rangeStart: string,
-  rangeEnd: string,
-): SlotOption[] => {
+// Tag ONLY the appointment's own exact start time as `current` (selectable) so the
+// existing slot shows as "Booked". The other slots of the current appointment's window
+// come back as `type:"booked"` and stay hidden — we must not mark the whole span as
+// booked. Ensures the start is present even if the API omitted it.
+const withCurrentStart = (options: SlotOption[], rangeStart: string): SlotOption[] => {
   if (!rangeStart) return options;
-  const lo = timeToMinutes(rangeStart);
-  const hi = rangeEnd ? timeToMinutes(rangeEnd) : lo + 1;
-  const marked = options.map((o) => {
-    const t = timeToMinutes(o.value);
-    return t >= lo && t < hi ? { ...o, type: "current", disabled: false } : o;
-  });
+  const marked = options.map((o) =>
+    o.value === rangeStart ? { ...o, type: "current", disabled: false } : o,
+  );
   if (!marked.some((o) => o.value === rangeStart)) {
     return [{ value: rangeStart, label: formatTime(rangeStart), disabled: false, type: "current" }, ...marked];
   }
@@ -319,17 +317,6 @@ const OCCUPIED_SLOT_TYPES = new Set([
   "not_available",
   "unavailable",
 ]);
-
-// Display label for a Start/End time option. The appointment's own slot is shown as
-// "<time> – Current"; lunch slots as "<time> – Lunch"; occupied slots generically as
-// "<time> – Not Available" (their backend reason is stripped); everything else keeps
-// its backend label.
-const slotDisplayLabel = (o: SlotOption): string => {
-  const clean = o.label.replace(/\s*\(.*\)\s*$/, "").trim();
-  if (o.type === "current") return `${clean} – Current`;
-  if (o.type === "lunch") return `${clean} – Lunch`;
-  return OCCUPIED_SLOT_TYPES.has(o.type) ? `${clean} – Not Available` : o.label;
-};
 
 // True when an END option can actually close an appointment starting at the chosen
 // start — i.e. it is available (not booked/blocked/lunch/holiday) and selectable.
@@ -537,32 +524,40 @@ export default function Appointments() {
   // month never refetches and month navigation fires at most one request.
   const loadedMonthsRef = useRef<Set<string>>(new Set());
 
-  // The pre-auth service-window restriction only applies to appointments booked
-  // via a pre-auth (`made_via === "preauth"`). Any other booking may be moved to
-  // any future date, so its calendar is bounded by today only. `made_via` and the
-  // window dates are authoritative on the get-appointment detail; fall back to the
-  // list row only if the detail hasn't loaded yet.
+  // Earliest selectable reschedule date = later of today and the pre-auth window start.
+  // The window dates come from the pre-auth; read them from whichever source has them
+  // (the get-appointment detail OFTEN omits them, but the list row that opened the modal
+  // carries them). No `made_via` gate — if a window exists, the calendar is bounded by it.
   const rescheduleMinDate = useMemo(() => {
     const today = startOfDay(new Date());
-    const src = appointmentDetail ?? rescheduleAppointment;
-    if (String(src?.made_via ?? "").toLowerCase() !== "preauth") return today;
-    const startStr = src?.svc_date_start;
+    const startStr = appointmentDetail?.svc_date_start || rescheduleAppointment?.svc_date_start;
     if (!startStr) return today;
     const start = parse(formatDateInput(startStr), "yyyy-MM-dd", new Date());
     return isValid(start) && start > today ? start : today;
   }, [appointmentDetail, rescheduleAppointment]);
 
-  // Latest selectable reschedule date: the pre-auth window's end. `ext_date`
-  // (extension) takes precedence over `svc_date_end` when present. Undefined
-  // (no upper bound) for non-pre-auth appointments or when there is no window.
+  // Latest selectable reschedule date = the pre-auth window's end. `ext_date` (extension)
+  // overrides `svc_date_end`. Read from whichever source has it; undefined (no upper
+  // bound) only when NO window end is present on either object.
   const rescheduleMaxDate = useMemo(() => {
-    const src = appointmentDetail ?? rescheduleAppointment;
-    if (String(src?.made_via ?? "").toLowerCase() !== "preauth") return undefined;
-    const endStr = src?.ext_date || src?.svc_date_end;
+    const ext = appointmentDetail?.ext_date || rescheduleAppointment?.ext_date;
+    const svcEnd = appointmentDetail?.svc_date_end || rescheduleAppointment?.svc_date_end;
+    const endStr = ext || svcEnd;
     if (!endStr) return undefined;
     const end = parse(formatDateInput(endStr), "yyyy-MM-dd", new Date());
     return isValid(end) ? end : undefined;
   }, [appointmentDetail, rescheduleAppointment]);
+
+  // Reschedule is allowed only once the chosen date+time differs from the current
+  // appointment. The current slot IS the active appointment, so re-picking it (same
+  // date + same time) must NOT enable the button. Date change is optional — a different
+  // time on the SAME day is a valid reschedule; but a time must be selected.
+  const rescheduleChanged = useMemo(() => {
+    if (!appointmentDetail || !rescheduleDate || !rescheduleStartTime) return false;
+    const curDate = formatDateInput(appointmentDetail.attend_date);
+    const curStart = appointmentDetail.time ? appointmentDetail.time.substring(0, 5) : "";
+    return rescheduleDate !== curDate || rescheduleStartTime !== curStart;
+  }, [appointmentDetail, rescheduleDate, rescheduleStartTime]);
 
   // Load the given month's availability with a SINGLE `get-time-slots-date-range`
   // call (not per-day — that endpoint rate-limits at ~30 calls/month, causing the
@@ -629,11 +624,12 @@ export default function Appointments() {
     // Pre-select the appointment's current start/end (marked "– Current").
     setRescheduleStartTime(start);
     setRescheduleEndTime(end);
+    setRescheduleStartOptions([]); // empty → the day loader shows (not a stale grid)
     setRescheduleSlotsLoading(true);
     // Start options come from the provider's real schedule for this date + location.
     const starts = await fetchRescheduleStartsForDate(detail, date);
     setRescheduleSlotsLoading(false);
-    setRescheduleStartOptions(withCurrentRange(starts, start, end));
+    setRescheduleStartOptions(withCurrentStart(starts, start));
   };
 
   // Date changed: immediately load the provider's real Start-time options for that
@@ -666,13 +662,14 @@ export default function Appointments() {
       setRescheduleEndTime("");
       return;
     }
+    setRescheduleStartOptions([]); // empty → the day loader shows (not the old day's grid)
     setRescheduleSlotsLoading(true);
     const starts = await fetchRescheduleStartsForDate(detail, ymd);
     setRescheduleSlotsLoading(false);
     // Mark the current window "– Current" only on the appointment's own date.
     const isOriginalDate = ymd === formatDateInput(detail.attend_date);
     const options = isOriginalDate
-      ? withCurrentRange(starts, detail.time.substring(0, 5), detail.end_time.substring(0, 5))
+      ? withCurrentStart(starts, detail.time.substring(0, 5))
       : starts;
     setRescheduleStartOptions(options);
 
@@ -841,6 +838,9 @@ export default function Appointments() {
     const errors: { startTime?: string; reason?: string; otherReason?: string } = {};
     if (!rescheduleStartTime || !rescheduleEndTime) {
       errors.startTime = "Please select a start time.";
+    } else if (!rescheduleChanged) {
+      // The current slot is the active appointment — a different time must be chosen.
+      errors.startTime = "Please select a different time slot to reschedule.";
     }
     if (!selectedReasonObj) {
       errors.reason = "Please select a reason for rescheduling.";
@@ -1375,7 +1375,7 @@ export default function Appointments() {
       <Dialog open={isRescheduleOpen} onOpenChange={(open) => { if (!open) closeRescheduleModal(); }}>
         <DialogContent
           showCloseButton={false}
-          className="!max-w-[980px] w-[90%] max-h-[90vh] p-5 gap-0 pointer-events-auto flex flex-col"
+          className="!max-w-[940px] w-[92%] max-h-[90vh] p-5 gap-0 pointer-events-auto flex flex-col"
           onAnimationEnd={() => { if (!isRescheduleOpen) { setRescheduleAppointment(null); setAppointmentDetail(null); setRescheduleReasons([]); } }}
         >
           <DialogHeader className="pb-4 border-b border-border min-h-auto flex-shrink-0">
@@ -1398,72 +1398,58 @@ export default function Appointments() {
           </DialogHeader>
 
           {rescheduleAppointment && (
-            <div className="py-5 space-y-5 overflow-auto">
+            <div className="py-5 space-y-5 overflow-auto flex-1 min-h-0">
               {isModalLoading ? (
                 <div className="flex items-center justify-center py-10">
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
               ) : (
                 <>
-                  {/* Row 1: Location | Speciality/Service Type | Physician */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium text-muted-foreground">Location</label>
-                      <input
-                        readOnly
-                        value={rescheduleAppointment.department || "—"}
-                        className="h-10 rounded-md border border-input bg-muted px-3 text-sm text-foreground cursor-default focus:outline-none focus:ring-0"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium text-muted-foreground">Speciality/Service Type</label>
-                      <input
-                        readOnly
-                        value={
-                          appointmentDetail?.service
-                            ? `${appointmentDetail.service.toUpperCase()} (${rescheduleAppointment.service_full_name})`
-                            : rescheduleAppointment.service_full_name || "—"
-                        }
-                        className="h-10 rounded-md border border-input bg-muted px-3 text-sm text-foreground cursor-default focus:outline-none focus:ring-0"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium text-muted-foreground">Physician</label>
-                      <input
-                        readOnly
-                        value={rescheduleAppointment.provider_name || "—"}
-                        className="h-10 rounded-md border border-input bg-muted px-3 text-sm text-foreground cursor-default focus:outline-none focus:ring-0"
-                      />
-                    </div>
-                  </div>
+                  {/* Provider context bar: Location · Provider Type · Provider · Preauth range */}
+                  {(() => {
+                    // Pre-auth authorized window (read from whichever source has it), so the
+                    // patient can see the from–to range that bounds the calendar.
+                    const svcStart = appointmentDetail?.svc_date_start || rescheduleAppointment.svc_date_start;
+                    const rangeEnd =
+                      appointmentDetail?.ext_date || rescheduleAppointment.ext_date ||
+                      appointmentDetail?.svc_date_end || rescheduleAppointment.svc_date_end;
+                    const fmtRange = (s?: string | null) => {
+                      if (!s) return "";
+                      const d = parse(formatDateInput(s), "yyyy-MM-dd", new Date());
+                      return isValid(d) ? format(d, "MMM d, yyyy") : "";
+                    };
+                    const preauthRange =
+                      svcStart && rangeEnd ? `In Between: ${fmtRange(svcStart)} – ${fmtRange(rangeEnd)}` : "";
+                    const parts = [
+                      { icon: MapPin, value: rescheduleAppointment.department },
+                      {
+                        icon: Stethoscope,
+                        value: appointmentDetail?.service
+                          ? `${appointmentDetail.service.toUpperCase()} (${rescheduleAppointment.service_full_name})`
+                          : rescheduleAppointment.service_full_name,
+                      },
+                      { icon: User, value: rescheduleAppointment.provider_name },
+                      { icon: CalendarDays, value: preauthRange },
+                    ].filter((p) => p.value);
+                    if (parts.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-sm">
+                        {parts.map(({ icon: Icon, value }, i) => (
+                          <span
+                            key={i}
+                            className={cn("flex items-center gap-1.5", i > 0 && "border-l border-border pl-3")}
+                          >
+                            <Icon className="h-4 w-4 text-primary flex-shrink-0" />
+                            <span className="font-medium text-foreground">{value}</span>
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
 
-                  {/* Row 2: Visit Type | Visit Status */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium text-muted-foreground">Visit Type</label>
-                      <input
-                        readOnly
-                        value={
-                          rescheduleAppointment.attend_type
-                            ? `${rescheduleAppointment.attend_type.toUpperCase()} (${rescheduleAppointment.attend_type_full_name})`
-                            : rescheduleAppointment.attend_type_full_name || "—"
-                        }
-                        className="h-10 rounded-md border border-input bg-muted px-3 text-sm text-foreground cursor-default focus:outline-none focus:ring-0"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium text-muted-foreground">Visit Status</label>
-                      <input
-                        readOnly
-                        value={appointmentStatusOf(rescheduleAppointment) || "—"}
-                        className="h-10 rounded-md border border-input bg-muted px-3 text-sm text-foreground cursor-default focus:outline-none focus:ring-0"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Row 3: Date | Start Time | End Time */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="flex flex-col gap-1.5">
+                  {/* Row 1: Date + Current/New summary side by side */}
+                  <div className="flex flex-col sm:flex-row gap-5">
+                    <div className="flex flex-col gap-2 sm:w-56 flex-shrink-0">
                       <label className="text-sm font-medium text-muted-foreground">Date</label>
                       <Popover>
                         <PopoverTrigger asChild>
@@ -1563,56 +1549,145 @@ export default function Appointments() {
                         </PopoverContent>
                       </Popover>
                     </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium text-muted-foreground">Start Time</label>
-                      <select
-                        disabled={rescheduleSlotsLoading}
-                        value={rescheduleStartTime}
-                        onChange={(e) => {
-                          setRescheduleErrors((prev) => ({ ...prev, startTime: undefined }));
-                          handleRescheduleStartChange(e.target.value);
-                        }}
-                        className={cn(
-                          "h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-0 appearance-none disabled:cursor-default disabled:bg-muted",
-                          rescheduleErrors.startTime && "border-destructive",
-                        )}
-                        style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}
-                      >
-                        {rescheduleStartOptions.length === 0 ? (
-                          <option value="">{rescheduleSlotsLoading ? "Loading…" : "Not Available"}</option>
-                        ) : (
-                          <option value="">Select Start Time</option>
-                        )}
-                        {rescheduleStartOptions.map((o) => (
-                          <option key={o.value} value={o.value} disabled={o.disabled}>
-                            {slotDisplayLabel(o)}
-                          </option>
-                        ))}
-                      </select>
-                      {rescheduleErrors.startTime && (
-                        <p className="text-xs text-destructive">{rescheduleErrors.startTime}</p>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium text-muted-foreground">End Time</label>
-                      {/* Read-only: End is always Start + the appointment's required
-                          duration; the user picks only the Start Time. */}
-                      <input
-                        readOnly
-                        value={
-                          rescheduleSlotsLoading
-                            ? "Loading…"
-                            : rescheduleEndTime
-                              ? formatTime(rescheduleEndTime)
-                              : "—"
-                        }
-                        className="h-10 rounded-md border border-input bg-muted px-3 text-sm text-foreground cursor-default focus:outline-none focus:ring-0"
-                      />
+                    {/* Current / New summary, beside the Date field */}
+                    <div className="flex-1 min-w-0 flex items-end">
+                      {appointmentDetail && (() => {
+                        const curDate = formatDateInput(appointmentDetail.attend_date);
+                        const curStart = appointmentDetail.time ? appointmentDetail.time.substring(0, 5) : "";
+                        const curEnd = appointmentDetail.end_time ? appointmentDetail.end_time.substring(0, 5) : "";
+                        const fmtDate = (ymd: string) => {
+                          const d = parse(ymd, "yyyy-MM-dd", new Date());
+                          return isValid(d) ? format(d, "MMM d, yyyy") : ymd;
+                        };
+                        const timeRange = (s: string, e: string) =>
+                          s ? (e ? `${formatTime(s)} – ${formatTime(e)}` : formatTime(s)) : "—";
+                        const hasNew =
+                          !!(rescheduleDate && rescheduleStartTime) &&
+                          (rescheduleDate !== curDate || rescheduleStartTime !== curStart);
+                        // Only show the summary once the patient has actually picked a new
+                        // date/time — Current + New then appear together for comparison.
+                        if (!hasNew) return null;
+                        return (
+                          // Both pills always stay on ONE row (text shrinks / ellipsises if tight)
+                          // and match the Date field height (h-10).
+                          <div className="w-full flex items-stretch gap-2 min-w-0">
+                            <div className="flex-1 min-w-0 h-10 flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-2.5 text-xs">
+                              <span className="inline-flex items-center gap-1 font-semibold text-indigo-700 whitespace-nowrap">
+                                <CalendarClock className="h-3.5 w-3.5 flex-shrink-0" /> Current
+                              </span>
+                              <span className="text-border">|</span>
+                              <span className="font-medium text-foreground whitespace-nowrap truncate">{fmtDate(curDate)} - {timeRange(curStart, curEnd)}</span>
+                            </div>
+                            <div className="flex items-center justify-center flex-shrink-0">
+                              <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                            <div className="flex-1 min-w-0 h-10 flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50/50 px-2.5 text-xs">
+                              <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 whitespace-nowrap">
+                                <CalendarCheck className="h-3.5 w-3.5 flex-shrink-0" /> New
+                              </span>
+                              <span className="text-border">|</span>
+                              <span className="font-medium text-foreground whitespace-nowrap truncate">{fmtDate(rescheduleDate)} - {timeRange(rescheduleStartTime, rescheduleEndTime)}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
 
+                  {/* Row 2: Available Times, full width */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-medium text-muted-foreground">Available Times</label>
+                      {/* Available-time picker as buttons. The appointment's own current slot
+                          (type "current") is shown as a distinct indigo "Booked" chip with a
+                          tooltip; other occupied slots are hidden. End time is auto-derived in
+                          handleRescheduleStartChange and sent in the payload. */}
+                      {/* Loader shows ONLY while a day's slots are loading (options empty).
+                          Picking a start keeps the grid visible so the modal doesn't resize. */}
+                      {rescheduleSlotsLoading && rescheduleStartOptions.length === 0 ? (
+                        <div className="flex items-center gap-2 h-10 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                        </div>
+                      ) : (() => {
+                        // Only show start times where the FULL required appointment duration is
+                        // continuously available (point 4), and hide any start within the 24h
+                        // reschedule lead time (point 5). The current appointment's own start is
+                        // always shown as the "Booked" chip.
+                        const duration = appointmentDetail
+                          ? calculateDuration(
+                              appointmentDetail.time.substring(0, 5),
+                              appointmentDetail.end_time.substring(0, 5),
+                            )
+                          : 0;
+                        const requiredBlocks = duration > 0 ? Math.max(1, Math.round(duration / 15)) : 1;
+                        const availableMins = new Set(
+                          rescheduleStartOptions
+                            .filter((o) => o.type === "available" && !o.disabled)
+                            .map((o) => timeToMinutes(o.value)),
+                        );
+                        const fitsDuration = (startMin: number) =>
+                          Array.from({ length: requiredBlocks }, (_, i) => startMin + i * 15).every((t) =>
+                            availableMins.has(t),
+                          );
+                        const visible = rescheduleStartOptions.filter((o) => {
+                          if (o.type === "current") return true; // existing appointment → "Booked"
+                          if (o.type !== "available" || o.disabled) return false;
+                          const startMin = timeToMinutes(o.value);
+                          return fitsDuration(startMin) && !isRescheduleTooSoon(rescheduleDate, o.value);
+                        });
+                        if (visible.length === 0) {
+                          return <p className="text-sm text-muted-foreground py-2">No available times for this day.</p>;
+                        }
+                        return (
+                          <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-8 gap-2">
+                            {visible.map((o) => {
+                              const selected = o.value === rescheduleStartTime;
+                              const isBooked = o.type === "current";
+                              const btn = (
+                                <button
+                                  key={o.value}
+                                  type="button"
+                                  // The booked (current) slot is the active appointment — not
+                                  // selectable; the cursor shows it can't be picked.
+                                  aria-disabled={isBooked}
+                                  onClick={() => {
+                                    if (isBooked) return;
+                                    setRescheduleErrors((prev) => ({ ...prev, startTime: undefined }));
+                                    handleRescheduleStartChange(o.value);
+                                  }}
+                                  className={cn(
+                                    "w-full h-10 flex items-center justify-center gap-1 rounded-lg border px-2 text-sm font-medium transition-colors",
+                                    isBooked
+                                      ? selected
+                                        ? "border-indigo-500 bg-indigo-500 text-white cursor-not-allowed"
+                                        : "border-indigo-300 bg-indigo-50 text-indigo-700 cursor-not-allowed"
+                                      : selected
+                                      ? "border-primary bg-primary text-primary-foreground"
+                                      : "border-border bg-card text-foreground hover:border-primary hover:bg-primary/5 hover:text-primary",
+                                  )}
+                                >
+                                  {isBooked && <CalendarClock className="h-3.5 w-3.5 flex-shrink-0" />}
+                                  {formatTime(o.value)}
+                                </button>
+                              );
+                              return isBooked ? (
+                                <Tooltip key={o.value}>
+                                  <TooltipTrigger asChild>{btn}</TooltipTrigger>
+                                  <TooltipContent>Your appointment is currently booked at this time</TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                btn
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                      {rescheduleErrors.startTime && (
+                        <p className="text-xs text-destructive">{rescheduleErrors.startTime}</p>
+                      )}
+                  </div>
+
                   {/* Row 4: Reason for Reschedule */}
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex flex-col gap-2">
                     <label className="text-sm font-medium text-muted-foreground">
                       Reason for Reschedule <span className="text-destructive">*</span>
                     </label>
@@ -1647,7 +1722,7 @@ export default function Appointments() {
                   {/* Free-text reason, shown only when "Other" is selected */}
                   {(rescheduleReasons.find((r) => String(r.id) === rescheduleReason)?.reason ?? "")
                     .trim().toLowerCase() === "other" && (
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-col gap-2">
                       <label className="text-sm font-medium text-muted-foreground">
                         Please specify the reason <span className="text-destructive">*</span>
                       </label>
@@ -1670,23 +1745,31 @@ export default function Appointments() {
                     </div>
                   )}
 
-                  {/* Re-Schedule button */}
-                  <div className="flex justify-center pt-2 w-50 mx-auto">
-                    <Button
-                      className="bg-primary hover:bg-primary/90 px-1 w-full"
-                      disabled={isRescheduleSubmitting}
-                      onClick={handleRescheduleSubmit}
-                    >
-                      {isRescheduleSubmitting ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <CalendarDays className="h-4 w-4" />
-                      )}
-                      Re-Schedule
-                    </Button>
-                  </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Fixed footer with a centered Re-Schedule button */}
+          {rescheduleAppointment && !isModalLoading && (
+            <div className="flex items-center justify-center pt-4 border-t border-border flex-shrink-0">
+              <Button
+                className="bg-primary hover:bg-primary/90"
+                onClick={handleRescheduleSubmit}
+                disabled={isRescheduleSubmitting || !rescheduleChanged}
+              >
+                {isRescheduleSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Rescheduling…
+                  </>
+                ) : (
+                  <>
+                    <CalendarDays className="h-4 w-4 mr-1.5" />
+                    Re-Schedule
+                  </>
+                )}
+              </Button>
             </div>
           )}
         </DialogContent>

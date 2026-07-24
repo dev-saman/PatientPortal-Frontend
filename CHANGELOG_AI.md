@@ -18,6 +18,67 @@ and notable configuration/docs changes.
 
 ---
 
+## 2026-07-24
+
+### Redesign: "Schedule Remaining Appointments" modal (UI/UX only)
+> **What:** Replaced the modal's spreadsheet-style UI with a cleaner, patient-friendly
+> layout matching the new design. The old 10-field read-only form grid became a single
+> compact context line (speciality · provider · location · date range); the multi-column
+> time table (5 day columns × every 15-min row, mostly "Not Available" cells) became a
+> horizontal **day-pill strip** (with ‹/› paging arrows) plus a grid of **only the
+> available start times** rendered as large tappable buttons for the focused day. The
+> right "Selected Appointments" column was restyled into a green **"Your appointments"**
+> summary panel ("X of N selected", empty state "Select a time to add it here."). Title
+> is now "Schedule Your Remaining Appointments" with a subtitle. Hardcoded inline hex
+> colors were swapped for theme tokens (`bg-primary`, `border-border`, `bg-muted`, …) so
+> the modal adapts to dark mode; hover was moved from JS mouse handlers to `hover:`
+> classes via `cn`. Panel width reduced (`!max-w-[880px]`), responsive at 375/768/1024px.
+>
+> **Behavior/validation unchanged:** all data fetching (block cache + prefetch, staleness
+> guard), preauth preselection, `checkSessionsCompleted` → `sessionLimit`, per-day
+> selection model, continuous-availability check (→ `SlotTooShortModal`), session-limit
+> guard, and `handleSchedule` (one POST per day) are untouched. Unavailable / lunch /
+> holiday / booked / past slots are now hidden rather than shown greyed (per design).
+> Added `activeDate` state + a focus-defaulting effect; removed now-unused `pageTimeSlots`,
+> `fieldCls`, `visitTypeOptions`, and the visit-type/company/provider-id display labels.
+>
+> **Files/areas:** `client/src/components/ScheduleAppointmentModal.tsx` (only). No changes
+> to `Apis`, `Appointments.tsx`, `SlotTooShortModal.tsx`, or `dialog.tsx`.
+>
+> **Auth / case-scoping / patient-data:** none — no API surface changed; scheduling still
+> runs in the selected preauth's `case_id/ma_id/patient_id` context exactly as before.
+
+### Follow-up refinements (same file, same day)
+> Post-review polish to the redesigned modal, all in `ScheduleAppointmentModal.tsx`:
+> - **Only fully-fitting slots shown.** `availableSlots` now additionally requires enough
+>   *continuous* availability from each slot to hold the full visit duration
+>   (`blockTickAfter(d, startMin) - startMin >= slotDuration`). Slots that can't fit the
+>   whole appointment are hidden, so the "Time Slot Not Long Enough" dialog is no longer
+>   reachable from the grid (its guard stays in `handleSlotClick` as a defensive no-op).
+> - **Removed the "Book at least 24 hours ahead" note.** Redundant: the backend returns
+>   sub-24h slots as `not_available`/`disabled` (in clinic `America/Chicago` time), and the
+>   available-only grid never renders them — so invalid slots are filtered before display.
+>   No client-side time filtering added (a browser-local check could misfire across
+>   timezones). Dropped the now-unused `Clock` import.
+> - **Layout/readability:** widened panel `!max-w-[880px]` → `!max-w-[1040px]` (`w-94%`);
+>   time grid `sm:grid-cols-3` → `sm:grid-cols-4` (4 per row); section headings
+>   `text-sm` → `text-base`; day-pill text vertically centered
+>   (`flex flex-col items-center justify-center`); hid the day-strip horizontal scrollbar
+>   (`[scrollbar-width:none]` + WebKit/MS variants) while keeping swipe/scroll.
+> - **Context bar reworked** into a single bordered line ordered **Location · Speciality ·
+>   Provider**, each segment with a lucide icon (`MapPin`/`Stethoscope`/`User`) and a
+>   vertical divider. The authorized service date range moved out of this bar to sit
+>   beside the "Choose a day" heading.
+> - **Day-strip polish:** day cards now stretch to fill the width between the nav arrows
+>   (`flex-1 min-w-[84px]`, was fixed `min-w-[92px]`) — no gap on either side. Replaced the
+>   separate "Selected" line with an inline `Check` icon before the date text (grey
+>   `text-muted-foreground/40` by default → green `text-emerald-600` when that day has a
+>   selection), so all cards share one height and are more compact. Dropped the "Today"/
+>   "Full" sub-labels and the now-unused `todayYMD` (disabled days still read as greyed).
+>   Increased the "Choose a day" heading-to-slider spacing (`space-y-2` → `space-y-3.5`).
+
+---
+
 ## 2026-07-15
 
 ### Appointments: status badge is API-driven; Reschedule/Cancel shown only for a Scheduled appointment

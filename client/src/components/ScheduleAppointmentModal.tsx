@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { X, ChevronLeft, ChevronRight, Trash2, CalendarDays, CalendarCheck, Coffee, Loader2, AlertCircle, UserX, Clock } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Trash2, CalendarDays, CalendarCheck, CalendarClock, Loader2, AlertCircle, Check, MapPin, Stethoscope, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -7,12 +7,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import Apis from "@/lib/Apis";
 import { getActivePatientId } from "@/lib/caseContext";
 import { getApiErrorMessage } from "@/lib/apiError";
-import { formatDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import type { PreauthRecord } from "@/components/SelectPreauthorizationModal";
 import SlotTooShortModal from "@/components/SlotTooShortModal";
 
@@ -80,6 +81,13 @@ const minutesToLabel = (min: number): string => {
   return `${h12}:${String(mm).padStart(2, "0")} ${ampm}`;
 };
 
+// Format a 24h "HH:MM[:SS]" time (as returned in preauth.appointments) to "8:30 AM".
+const time24ToLabel = (t: string): string => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(t).trim());
+  if (!m) return t;
+  return minutesToLabel(parseInt(m[1], 10) * 60 + parseInt(m[2], 10));
+};
+
 // Human-readable duration from minutes: 15 → "15 minutes", 60 → "1 hour",
 // 150 → "2 hours 30 minutes". Used in the "slot too short" message.
 const formatDuration = (min: number): string => {
@@ -99,6 +107,18 @@ const toYMD = (d: Date): string =>
 const formatDayHeader = (ymd: string): string => {
   const d = new Date(ymd + "T00:00:00");
   return `${SHORT_DAY[d.getDay()]}, ${SHORT_MONTH[d.getMonth()]} ${d.getDate()}`;
+};
+
+// Three-letter weekday ("Mon", "Tue", "Wed").
+const shortWeekday = (ymd: string): string => {
+  const d = new Date(ymd + "T00:00:00");
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()];
+};
+
+// Compact day-pill label: 3-letter weekday + month/day ("Mon, Jul 27").
+const formatDayPill = (ymd: string): string => {
+  const d = new Date(ymd + "T00:00:00");
+  return `${shortWeekday(ymd)}, ${SHORT_MONTH[d.getMonth()]} ${d.getDate()}`;
 };
 
 // Add `days` calendar days to a YYYY-MM-DD string, returning YYYY-MM-DD.
@@ -136,6 +156,10 @@ interface DateSlots {
   day_name: string;
   is_holiday?: boolean;
   holiday_name?: string | null;
+  // Day-level availability from the backend (get-time-slots-date-range). A closed
+  // day arrives with is_available:false + an unavailable_reason and empty slots.
+  is_available?: boolean;
+  unavailable_reason?: string | null;
   slots: TimeSlot[];
 }
 
@@ -152,6 +176,9 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
   // One confirmed appointment per day, keyed by date (YYYY-MM-DD).
   const [selectedByDay, setSelectedByDay] = useState<Record<string, DaySelection>>({});
   const [page, setPage] = useState(1);
+  // Day currently focused in the day-pill strip (YYYY-MM-DD). Defaulted/kept-valid
+  // by an effect whenever the visible page of dates changes.
+  const [activeDate, setActiveDate] = useState<string>("");
   // Remaining authorized sessions (denominator of the counter), from check-sessions-completed.
   const [sessionLimit, setSessionLimit] = useState(0);
   // Appointment length in minutes, from the backend `duration_minutes` (visit-type based).
@@ -208,18 +235,6 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
 
   // Find the group whose short_name matches the selected speciality
   const selectedGroup = specialityGroups.find((g) => g.short_name === selectedSpeciality) ?? null;
-
-  // Visit type options: from the selected group's visit_types (deduplicated by visittype_code)
-  const visitTypeOptions = (() => {
-    if (!selectedGroup) return [];
-    const seen = new Set<string>();
-    return (selectedGroup.visit_types ?? []).filter((vt) => {
-      const key = vt.visittype_code;
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  })();
 
   const fetchCompanyData = (department: string, physicianId: number | string, isInit = false) => {
     if (!department || !physicianId) return;
@@ -489,22 +504,10 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
     [selectedLocation, selectedPhysicianId, scheduleRangeStart, svcDateEnd, preauthCaseId, selectedVisitType, selectedSpeciality],
   );
 
-  // Load the block the given (1-based) page belongs to, then prefetch the adjacent
-  // blocks in the background so crossing into them is instant.
-  const ensureBlockForPage = useCallback(
-    (pageNum: number) => {
-      const blockIndex = Math.floor((pageNum - 1) / BLOCK_PAGES);
-      loadBlock(blockIndex).then(() => {
-        loadBlock(blockIndex + 1, true);
-        if (blockIndex > 0) loadBlock(blockIndex - 1, true);
-      });
-    },
-    [loadBlock],
-  );
-
-  // Reset the cache + selections and load the first block whenever the query changes
-  // (location / provider / dates / visit type / speciality). `loadBlock`'s identity
-  // changes with exactly those inputs, so depending on it covers all of them.
+  // Reset the cache + selections whenever the query changes (location / provider /
+  // dates / visit type / speciality). `loadBlock`'s identity changes with exactly those
+  // inputs, so depending on it covers all of them. Blocks are then (re)loaded lazily by
+  // the "ensure enough days for the current page" effect further down.
   useEffect(() => {
     loadGenerationRef.current += 1;
     blockCacheRef.current = {};
@@ -513,22 +516,33 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
     setSelectedByDay({});
     setTimeSlotsError(null);
     setPage(1);
-    ensureBlockForPage(1);
-  }, [ensureBlockForPage]);
+  }, [loadBlock]);
 
-  // Navigate pages. Blocks are cached (and neighbours prefetched), so within a block
-  // this is instant and crossing to a prefetched block usually shows no loader.
+  // Navigate pages. Days are paginated 5-at-a-time from a flat list of all loaded blocks
+  // (see below), so a page is always exactly PAGE_COLUMNS days whenever data exists.
   const goToPage = (pageNum: number) => {
     if (pageNum < 1) return;
     setPage(pageNum);
-    ensureBlockForPage(pageNum);
   };
 
-  const todayYMD = toYMD(new Date());
   const selectedCount = Object.keys(selectedByDay).length;
 
-  // Display labels for the read-only context fields. Values are preselected from
-  // the preauth on open; these just resolve the human-readable text to show.
+  // Dates the patient has ALREADY booked under this preauth (patient-scoped, from
+  // get-approved-preauth → preauth.appointments.upcoming_appt), keyed by YYYY-MM-DD.
+  // These days are viewable but not re-bookable; their time cannot be changed here.
+  const bookedByDate = useMemo(() => {
+    const map: Record<string, { time: string; end_time: string; attend_status?: string | null }> = {};
+    const list = preauth?.appointments?.upcoming_appt;
+    if (Array.isArray(list)) {
+      for (const a of list) {
+        if (a?.attend_date) map[String(a.attend_date)] = a;
+      }
+    }
+    return map;
+  }, [preauth]);
+
+  // Display labels for the compact context summary. Values are preselected from the
+  // preauth on open; these resolve the human-readable text to show.
   const selectedLocationLabel =
     departments.find((d) => String(d.id) === selectedLocation)?.name ?? selectedLocation;
   const selectedSpecialityLabel = selectedGroup
@@ -536,10 +550,6 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
       ? `${selectedGroup.short_name} (${selectedGroup.name})`
       : selectedGroup.short_name
     : selectedSpeciality;
-  const selectedVisitTypeObj = visitTypeOptions.find((vt) => vt.visittype_code === selectedVisitType);
-  const selectedVisitTypeLabel = selectedVisitTypeObj
-    ? `${selectedVisitTypeObj.visittype_code.toUpperCase()} (${selectedVisitTypeObj.visittype_name})`
-    : selectedVisitType;
 
   // The exclusive end cap for a range starting at `startMin` on a given day:
   // the first non-available slot after the start (lunch/booked/blocked/holiday),
@@ -720,48 +730,122 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
     return "disabled-day";
   };
 
-  // Slice the current page's 5 columns out of its (already-cached) block.
-  const currentBlockIndex = Math.floor((page - 1) / BLOCK_PAGES);
-  const currentBlock = blockCache[currentBlockIndex] ?? [];
-  const pageOffsetInBlock = (page - 1) % BLOCK_PAGES;
-  const pagedDates = currentBlock.slice(pageOffsetInBlock * PAGE_COLUMNS, pageOffsetInBlock * PAGE_COLUMNS + PAGE_COLUMNS);
-  const pagesInCurrentBlock = Math.max(1, Math.ceil(currentBlock.length / PAGE_COLUMNS));
-  // The page loader shows whenever the current page's block hasn't arrived yet —
-  // covers both a foreground fetch and jumping onto a still-prefetching block.
-  const isPageLoading = !(currentBlockIndex in blockCache) && !timeSlotsError;
+  // Days are paginated from a FLAT, ordered list of every contiguously-loaded block
+  // (0,1,2,…). Slicing a flat list 5-at-a-time guarantees each page is exactly
+  // PAGE_COLUMNS days regardless of how many working days any single block returned —
+  // this is what stops the strip from ever showing 4 days mid-range.
+  const loadedDates = useMemo(() => {
+    const out: DateSlots[] = [];
+    for (let i = 0; i in blockCache; i++) out.push(...blockCache[i]);
+    return out;
+  }, [blockCache]);
+
+  // First not-yet-loaded contiguous block, and whether it still falls in the window.
+  let nextUnloadedBlock = 0;
+  while (nextUnloadedBlock in blockCache) nextUnloadedBlock++;
+  const moreBlocksInRange =
+    !!scheduleRangeStart && !!svcDateEnd &&
+    addDays(scheduleRangeStart, BLOCK_WINDOW_DAYS * nextUnloadedBlock) <= svcDateEnd;
+
+  const pageStartIdx = (page - 1) * PAGE_COLUMNS;
+
+  // Lazily load blocks in order until the current page (plus one page of look-ahead) is
+  // covered. Each load grows `loadedDates` and re-runs this effect, chaining until we
+  // have enough days or the authorized window is exhausted. The current page loads in
+  // the foreground (shows a spinner); the look-ahead block loads in the background.
+  useEffect(() => {
+    if (!moreBlocksInRange) return;
+    const needed = page * PAGE_COLUMNS + PAGE_COLUMNS; // current page + look-ahead
+    if (loadedDates.length >= needed) return;
+    const background = loadedDates.length >= pageStartIdx + PAGE_COLUMNS; // current page already covered
+    loadBlock(nextUnloadedBlock, background);
+  }, [page, pageStartIdx, loadedDates.length, nextUnloadedBlock, moreBlocksInRange, loadBlock]);
+
+  const pagedDates = loadedDates.slice(pageStartIdx, pageStartIdx + PAGE_COLUMNS);
+  // Still loading this page while it isn't yet a full window AND more blocks can arrive.
+  const isPageLoading =
+    loadedDates.length < pageStartIdx + PAGE_COLUMNS && moreBlocksInRange && !timeSlotsError;
   const hasPrevPage = page > 1;
-  const hasNextPage =
-    pageOffsetInBlock + 1 < pagesInCurrentBlock || // more pages already in this block
-    (!!scheduleRangeStart && !!svcDateEnd &&
-      addDays(scheduleRangeStart, BLOCK_WINDOW_DAYS * (currentBlockIndex + 1)) <= svcDateEnd); // a next block exists
+  const hasNextPage = loadedDates.length > pageStartIdx + PAGE_COLUMNS || moreBlocksInRange;
 
-  // All unique times across the current page's dates, sorted chronologically so
-  // rows line up across day columns.
-  const pageTimeSlots: string[] = (() => {
-    const seen = new Set<string>();
-    pagedDates.forEach((d) => d.slots.forEach((s) => seen.add(s.time)));
-    return Array.from(seen).sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
-  })();
+  // Only bookable slots for a day: an available slot is shown ONLY when there is enough
+  // *continuous* availability from it to fit the full appointment duration (visit-type
+  // `slotDuration`). Slots that can't hold the whole appointment are hidden entirely, so
+  // the "time slot not long enough" path is never reached. (unavailable/lunch/holiday/
+  // booked/past are already excluded.)
+  const availableSlots = (d: DateSlots): TimeSlot[] =>
+    d.is_holiday
+      ? []
+      : d.slots.filter((s) => {
+          if (s.type !== "available" || s.disabled) return false;
+          const startMin = timeToMinutes(s.time);
+          return blockTickAfter(d, startMin) - startMin >= slotDuration;
+        });
+  const dayHasOpenings = (d: DateSlots): boolean => availableSlots(d).length > 0;
 
-  // Shared input/field class (text inputs, date inputs, textarea)
-  const fieldCls =
-    "w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/40";
+  // Human-readable reason a day can't be booked, for the disabled-pill tooltip.
+  // Returns null when the day is selectable. Values map to the backend's day-level
+  // fields (is_holiday/holiday_name, is_available/unavailable_reason); the fall-through
+  // covers open days whose slots are all taken/blocked/too short to fit the visit.
+  const dayUnavailableReason = (d: DateSlots): string | null => {
+    if (dayHasOpenings(d)) return null;
+    if (d.is_holiday) return d.holiday_name ? `Holiday — ${d.holiday_name}` : "Holiday — clinic closed";
+    if (d.is_available === false) {
+      switch (d.unavailable_reason) {
+        case "provider_absence":
+          return "Provider is not available on this day";
+        case "not_scheduled":
+          return "Provider is not scheduled on this day";
+        case "no_availability":
+          return "No provider availability for this day";
+        default:
+          return "Provider is not available on this day";
+      }
+    }
+    return "No open time slots for this day";
+  };
+
+  // Day currently focused in the pill strip, and its bookable times.
+  const activeDay = pagedDates.find((d) => d.date === activeDate) ?? null;
+  const activeDaySlots = activeDay ? availableSlots(activeDay) : [];
+
+  // Keep the focused day valid: whenever the visible page of dates changes (paging or
+  // a query reset), focus the first day with openings, falling back to the first day.
+  useEffect(() => {
+    if (pagedDates.length === 0) return;
+    if (pagedDates.some((d) => d.date === activeDate)) return; // keep a still-visible selection
+    const firstOpen = pagedDates.find((d) => availableSlots(d).length > 0);
+    setActiveDate((firstOpen ?? pagedDates[0]).date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagedDates, activeDate]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
         showCloseButton={false}
-        className="!max-w-[1150px] w-[90%] h-[90vh] p-5 gap-0 pointer-events-auto min-h-auto flex flex-col"
+        className="!max-w-[1040px] w-[94%] max-h-[90vh] p-0 gap-0 pointer-events-auto min-h-auto flex flex-col overflow-hidden"
       >
         {/* ── Fixed header ── */}
-        <DialogHeader className="pb-4 border-b border-border min-h-auto flex-shrink-0">
-          <div className="flex items-center justify-between w-full">
-            <DialogTitle className="text-lg font-semibold flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-primary flex-shrink-0" />
-              <span>Schedule Remaining Appointments</span>
-            </DialogTitle>
+        <DialogHeader className="px-6 pt-5 pb-4 border-b border-border min-h-auto flex-shrink-0 space-y-0">
+          <div className="flex items-start justify-between w-full gap-3">
+            <div className="flex items-start gap-2.5">
+              <CalendarDays className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <DialogTitle className="text-lg font-semibold leading-tight text-left">
+                  Schedule Your Remaining Appointments
+                </DialogTitle>
+                {!isModalLoading && !sessionsBlockMessage && (
+                  <p className="text-sm text-muted-foreground text-left">
+                    {sessionLimit > 0
+                      ? `Choose up to ${sessionLimit} appointment${sessionLimit === 1 ? "" : "s"}. Only available times are shown.`
+                      : "Only available times are shown."}
+                  </p>
+                )}
+              </div>
+            </div>
             <button
               onClick={onClose}
+              aria-label="Close"
               className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
             >
               <X className="h-5 w-5" />
@@ -771,362 +855,269 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
 
         {/* ── Modal-level loader ── */}
         {isModalLoading && (
-          <div className="flex flex-1 items-center justify-center">
+          <div className="flex items-center justify-center min-h-[320px]">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
         )}
 
         {/* ── Sessions completed block message ── */}
         {!isModalLoading && sessionsBlockMessage && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 px-4">
+          <div className="flex flex-col items-center justify-center gap-3 min-h-[320px] py-8 px-6">
             <AlertCircle className="h-10 w-10 text-amber-500 flex-shrink-0" />
-            <p className="text-center text-sm text-gray-700 max-w-md">{sessionsBlockMessage}</p>
+            <p className="text-center text-sm text-foreground max-w-md">{sessionsBlockMessage}</p>
           </div>
         )}
 
         {/* ── Scrollable body ── */}
         {!isModalLoading && !sessionsBlockMessage && (
-        <div className="py-4 overflow-auto space-y-5 px-1 flex-1">
+        <div className="flex-1 overflow-auto px-6 py-4 space-y-5">
 
-          {/* Row 1: Location · Speciality/Service Type · Service Provider */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
-              <input type="text" value={selectedLocationLabel || "--"} disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Speciality/Service Type</label>
-              <input type="text" value={selectedSpecialityLabel || "--"} disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Service Provider</label>
-              <input type="text" value={selectedProvider || "--"} disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-          </div>
-
-          {/* Row 2: Visit Type · Visit Status · Company · Provider ID */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Visit Type</label>
-              <input type="text" value={selectedVisitTypeLabel || "--"} disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Visit Status</label>
-              <input type="text" defaultValue="Scheduled" disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
-              <input type="text" value={selectedCompany || "--"} disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Provider ID</label>
-              <input
-                type="text"
-                value={selectedProviderId}
-                disabled
-                readOnly
-                className={`${fieldCls} cursor-not-allowed`}
-                style={{ backgroundColor: "#f5f6f8" }}
-              />
-            </div>
-          </div>
-
-          {/* Row 3: Start Date · End Date · Ext Date */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Read-only date displays. Rendered as text (not type="date") so the format is
-                always MM-DD-YYYY rather than the browser locale's. The underlying
-                svcDateStart/svcDateEnd state stays YYYY-MM-DD for the API. */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-              <input type="text" value={formatDate(svcDateStart) || "--"} disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-              <input type="text" value={formatDate(svcDateEnd) || "--"} disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Ext Date</label>
-              <input type="text" value={formatDate(preauth?.ext_date) || "--"} disabled readOnly className={`${fieldCls} cursor-not-allowed`} style={{ backgroundColor: "#f5f6f8" }} />
-            </div>
-          </div>
-
-          {/* ── Time Slots + Selected Appointments ── */}
-          <div className="flex flex-col lg:flex-row gap-4">
-
-            {/* Select Available Time Slots */}
-            <div className="flex-1 border border-gray-200 rounded-lg overflow-hidden">
-              {/* panel header */}
-              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200" style={{ background: "#f8f0f0" }}>
-                <div className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: "#5b0f0f" }}>
-                  <CalendarDays className="h-4 w-4" />
-                  Select Available Time Slots
-                </div>
-                <span className="bg-gray-100 text-gray-800 font-bold px-3 py-0.5 rounded" style={{ fontSize: "0.8rem" }}>
-                  {selectedCount} / {sessionLimit || "?"}
-                </span>
-              </div>
-
-              {/* Minimum lead-time note (backend rule: appointments must be >= 24h away) */}
-              <div className="flex items-center gap-2 px-3 py-2 text-xs text-gray-600 bg-gray-50 border-b border-gray-200">
-                <Clock className="h-4 w-4 flex-shrink-0 text-gray-500" />
-                Appointments can only be booked at least 24 hours in advance.
-              </div>
-
-              {/* Session limit reached banner */}
-              {sessionLimit === 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 text-xs text-amber-700 bg-amber-50 border-b border-amber-200">
-                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                  Session limit reached. No remaining authorized sessions to schedule.
-                </div>
-              )}
-
-              {/* Prev / Next navigation — each page lazy-loads its own date window */}
-              {(hasPrevPage || hasNextPage) && (
-                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white">
-                  <button
-                    onClick={() => goToPage(page - 1)}
-                    disabled={!hasPrevPage || isPageLoading}
-                    className="flex items-center gap-1 text-sm border rounded px-3 py-1 transition-colors disabled:opacity-40 hover:text-white"
-                    style={{ borderColor: "#5b0f0f", color: !hasPrevPage ? "#5b0f0f" : undefined }}
-                    onMouseEnter={(e) => { if (hasPrevPage && !isPageLoading) e.currentTarget.style.background = "#5b0f0f"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
+          {/* Provider context bar: Location · Speciality · Provider · In Between range */}
+          {(() => {
+            // Authorized service window (start → ext_date/end), shown as "In Between" so
+            // the range lives in the same bar as the other details (no duplicate below).
+            const rangeEndRaw = preauth?.ext_date || svcDateEnd;
+            const fmtR = (ymd?: string | null) => {
+              if (!ymd) return "";
+              const d = new Date(String(ymd) + "T00:00:00");
+              return isNaN(d.getTime()) ? "" : `${SHORT_MONTH[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+            };
+            const inBetween =
+              svcDateStart && rangeEndRaw ? `In Between: ${fmtR(svcDateStart)} – ${fmtR(rangeEndRaw)}` : "";
+            const parts = [
+              { icon: MapPin, value: selectedLocationLabel },
+              { icon: Stethoscope, value: selectedSpecialityLabel },
+              { icon: User, value: selectedProvider },
+              { icon: CalendarDays, value: inBetween },
+            ].filter((p) => p.value);
+            if (parts.length === 0) return null;
+            return (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-sm">
+                {parts.map(({ icon: Icon, value }, i) => (
+                  <span
+                    key={i}
+                    className={cn("flex items-center gap-1.5", i > 0 && "border-l border-border pl-3")}
                   >
-                    <ChevronLeft className="h-4 w-4" /> Previous
-                  </button>
-                  <button
-                    onClick={() => goToPage(page + 1)}
-                    disabled={!hasNextPage || isPageLoading}
-                    className="flex items-center gap-1 text-sm border rounded px-3 py-1 transition-colors disabled:opacity-40 hover:text-white"
-                    style={{ borderColor: "#5b0f0f", color: !hasNextPage ? "#5b0f0f" : undefined }}
-                    onMouseEnter={(e) => { if (hasNextPage && !isPageLoading) e.currentTarget.style.background = "#5b0f0f"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
-                  >
-                    Next <ChevronRight className="h-4 w-4" />
-                  </button>
-                </div>
-              )}
+                    <Icon className="h-4 w-4 text-primary flex-shrink-0" />
+                    <span className="font-medium text-foreground">{value}</span>
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
 
-              {/* Time slots body */}
-              {isPageLoading && (
-                <div className="flex items-center justify-center py-10">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                </div>
-              )}
-              {!isPageLoading && timeSlotsError && (
-                <div className="flex items-center justify-center gap-2 py-6 text-sm text-red-600 px-4">
-                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                  {timeSlotsError}
-                </div>
-              )}
-              {!isPageLoading && !timeSlotsError && pagedDates.length === 0 && (
-                <div className="flex items-center justify-center py-8 text-sm text-gray-400">
-                  No time slots available
-                </div>
-              )}
-              {!isPageLoading && !timeSlotsError && pagedDates.length > 0 && pageTimeSlots.length === 0 && (
-                <div className="flex items-center justify-center py-8 text-sm text-gray-400">
-                  Provider not available for the selected days
-                </div>
-              )}
-              {!isPageLoading && !timeSlotsError && pagedDates.length > 0 && pageTimeSlots.length > 0 && (
-              <div className="overflow-x-auto p-2">
-                <table className="w-full table-fixed text-sm border-separate" style={{ borderSpacing: "3px" }}>
-                  <thead>
-                    <tr>
-                      {pagedDates.map((d) => {
-                        const isToday = d.date === todayYMD;
-                        return (
-                          <th
-                            key={d.date}
-                            style={{ width: `${100 / pagedDates.length}%` }}
-                            className="px-1 py-1 text-center align-bottom"
+          {/* Session-limit reached banner */}
+          {sessionLimit === 0 && (
+            <div className="flex items-center gap-2 rounded-md px-3 py-2 text-xs text-amber-700 bg-amber-50 border border-amber-200">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              No remaining authorized sessions to schedule.
+            </div>
+          )}
+
+          {/* ── Day picker + times | Your appointments ── */}
+          <div className="flex flex-col lg:flex-row gap-5">
+
+            {/* Left: choose a day + available times */}
+            <div className="flex-1 min-w-0 space-y-4">
+
+              {/* Choose a day */}
+              <div className="space-y-3.5">
+                <h3 className="text-base font-semibold text-foreground whitespace-nowrap">Choose a day</h3>
+
+                <div className="flex items-center gap-2">
+                  {(hasPrevPage || hasNextPage) && (
+                    <button
+                      onClick={() => goToPage(page - 1)}
+                      disabled={!hasPrevPage || isPageLoading}
+                      aria-label="Previous days"
+                      className="flex-shrink-0 rounded-full border border-border p-1.5 text-muted-foreground transition-colors hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                  )}
+
+                  <div className="flex-1 min-w-0 flex gap-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                    {isPageLoading ? (
+                      <div className="flex items-center justify-center w-full py-4">
+                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                      </div>
+                    ) : timeSlotsError ? (
+                      <div className="flex items-center justify-center w-full gap-2 py-4 text-sm text-red-600">
+                        <AlertCircle className="h-4 w-4 flex-shrink-0" /> {timeSlotsError}
+                      </div>
+                    ) : pagedDates.length === 0 ? (
+                      <div className="flex items-center justify-center w-full py-4 text-sm text-muted-foreground">
+                        No days available
+                      </div>
+                    ) : (
+                      pagedDates.map((d) => {
+                        const isActive = d.date === activeDate;
+                        const isBooked = !!bookedByDate[d.date];
+                        const hasSel = !!selectedByDay[d.date];
+                        // Booked days stay viewable (selectable) even if they have no other
+                        // openings; the time simply can't be changed here.
+                        const open = isBooked || dayHasOpenings(d);
+                        const reason = isBooked
+                          ? "Appointment already booked"
+                          : open
+                          ? null
+                          : dayUnavailableReason(d);
+                        const pill = (
+                          <button
+                            // aria-disabled (not `disabled`) so hover/tap still fires the
+                            // tooltip explaining why the day can't be booked.
+                            aria-disabled={!open}
+                            onClick={() => { if (open) setActiveDate(d.date); }}
+                            className={cn(
+                              "flex-1 min-w-[96px] flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-center transition-colors",
+                              // Booked (indigo) > selected this session (green) > currently-viewed (primary).
+                              isBooked
+                                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                                : hasSel
+                                ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                                : isActive
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border bg-card text-foreground hover:border-primary/40 hover:bg-muted",
+                              !open && "opacity-40 cursor-not-allowed hover:border-border hover:bg-card",
+                            )}
                           >
-                            <div className={`py-1 ${isToday ? "rounded-md" : ""}`} style={isToday ? { background: "#fff8e1" } : undefined}>
-                              <div className="font-semibold" style={{ color: "#343a40", fontSize: "0.78rem" }}>{formatDayHeader(d.date)}</div>
-                              {isToday && <div className="font-medium" style={{ color: "#b8860b", fontSize: "0.6rem" }}>Today</div>}
-                              {selectedByDay[d.date] && <div className="font-medium" style={{ color: "#198754", fontSize: "0.65rem" }}>✓ Selected</div>}
-                            </div>
-                          </th>
+                            {isBooked ? (
+                              <CalendarClock className="h-3.5 w-3.5 flex-shrink-0 text-indigo-600" />
+                            ) : (
+                              <Check
+                                className={cn(
+                                  "h-3.5 w-3.5 flex-shrink-0",
+                                  hasSel ? "text-emerald-600" : "text-muted-foreground/40",
+                                )}
+                              />
+                            )}
+                            <span className="text-sm font-semibold leading-tight whitespace-nowrap">{formatDayPill(d.date)}</span>
+                          </button>
                         );
-                      })}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageTimeSlots.map((time) => (
-                      <tr key={time}>
-                        {pagedDates.map((d) => {
-                          const isToday = d.date === todayYMD;
-                          const tdStyle: React.CSSProperties = { width: `${100 / pagedDates.length}%`, ...(isToday ? { background: "#fffde7" } : {}) };
-                          const base = "block w-full rounded-[4px] border px-1 py-1 font-medium text-center leading-tight transition-colors";
+                        return (
+                          <div key={d.date} className="flex-1 min-w-[96px] flex">
+                            {reason ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>{pill}</TooltipTrigger>
+                                <TooltipContent>{reason}</TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              pill
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
 
-                          // A holiday closes the WHOLE day regardless of the provider's
-                          // schedule at any location — show "Holiday" in every row (no
-                          // time slots), so e.g. morning slots from another location's
-                          // schedule don't leak through as greyed times.
-                          if (d.is_holiday) {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div
-                                  className={`${base} cursor-not-allowed`}
-                                  title={d.holiday_name || undefined}
-                                  style={{ background: "#fef2f2", color: "#dc3545", borderColor: "#f5c6cb", fontSize: "0.68rem", fontWeight: 600 }}
-                                >
-                                  Holiday
-                                </div>
-                              </td>
-                            );
-                          }
-
-                          // Provider not available for this whole day → N/A cell for every row
-                          if (d.slots.length === 0) {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div className={`${base} cursor-not-allowed flex items-center justify-center gap-1`} style={{ background: "#f8f9fa", color: "#adb5bd", borderColor: "#e9ecef", fontSize: "0.7rem", opacity: 0.85 }}>
-                                  <UserX className="h-3 w-3" /> N/A
-                                </div>
-                              </td>
-                            );
-                          }
-
-                          const slot = d.slots.find((s) => s.time === time);
-                          // No slot for this row on this day — e.g. today's already-passed
-                          // early times, which the API omits. Render a greyed, non-selectable
-                          // cell (labeled "Past" for today) rather than an empty cell, which
-                          // would otherwise expose today's yellow column background with no text.
-                          if (!slot) {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div className={`${base} cursor-not-allowed`} style={{ background: "#f8f9fa", color: "#c0c0c0", borderColor: "#e9ecef", fontSize: "0.72rem" }}>
-                                  {isToday ? `${time} – Past` : time}
-                                </div>
-                              </td>
-                            );
-                          }
-
-                          const st = cellState(d.date, time);
-
-                          // Selected-day states
-                          if (st === "start" || st === "end") {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <button
-                                  onClick={() => handleSlotClick(d, slot)}
-                                  className={base}
-                                  style={{ background: "#5b0f0f", color: "#fff", borderColor: "#5b0f0f", fontSize: "0.72rem" }}
-                                >
-                                  ✓ {time} ({st === "start" ? "Start" : "End"})
-                                </button>
-                              </td>
-                            );
-                          }
-                          if (st === "in-range") {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div className={`${base} cursor-default`} style={{ background: "#f8e8e8", color: "#5b0f0f", borderColor: "#e0c0c0", fontSize: "0.72rem" }}>{time}</div>
-                              </td>
-                            );
-                          }
-                          if (st === "disabled-day") {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div className={`${base} cursor-not-allowed`} style={{ background: "#f8f9fa", color: "#c0c0c0", borderColor: "#e9ecef", fontSize: "0.72rem" }}>{time}</div>
-                              </td>
-                            );
-                          }
-
-                          // Not on a selected day → render by slot type
-                          if (slot.type === "lunch" || slot.is_lunch) {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div className={`${base} cursor-not-allowed flex items-center justify-center gap-1`} style={{ background: "#fff8e1", color: "#b8860b", borderColor: "#f0e6c0", fontSize: "0.7rem", opacity: 0.85 }}>
-                                  <Coffee className="h-3 w-3" /> Lunch
-                                </div>
-                              </td>
-                            );
-                          }
-                          // Backend-owned unavailability (incl. the 24h advance-booking
-                          // rule, which arrives as type "not_available" + a `reason`).
-                          // Shown generically as "<time> – Not Available"; the backend's
-                          // reason is surfaced on hover only.
-                          if (slot.type === "not_available" || slot.type === "unavailable") {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div
-                                  className={`${base} cursor-not-allowed truncate`}
-                                  title={slot.reason || `${time} – Not Available`}
-                                  style={{ background: "#f8f9fa", color: "#adb5bd", borderColor: "#e9ecef", fontSize: "0.72rem" }}
-                                >
-                                  {time} – Not Available
-                                </div>
-                              </td>
-                            );
-                          }
-                          if (slot.type === "holiday") {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div className={`${base} cursor-not-allowed`} style={{ background: "#fef2f2", color: "#dc3545", borderColor: "#f5c6cb", fontSize: "0.68rem", fontWeight: 600 }}>Holiday</div>
-                              </td>
-                            );
-                          }
-                          // Occupied slots (booked / cross-location booked / blocked) are all
-                          // shown generically as "Not Available" — the patient must not learn
-                          // whether a slot is booked, blocked, or booked at another location.
-                          if (slot.type === "booked" || slot.type === "cross_location_booked" || slot.type === "blocked" || slot.type === "blocked_cross_location") {
-                            return (
-                              <td key={d.date} style={tdStyle}>
-                                <div className={`${base} cursor-not-allowed truncate`} title={`${time} – Not Available`} style={{ background: "#f8f9fa", color: "#adb5bd", borderColor: "#e9ecef", fontSize: "0.72rem" }}>{time} – Not Available</div>
-                              </td>
-                            );
-                          }
-
-                          // Available
-                          return (
-                            <td key={d.date} style={tdStyle}>
-                              <button
-                                onClick={() => handleSlotClick(d, slot)}
-                                className={base}
-                                style={{ background: "#fff", color: "#495057", borderColor: "#dee2e6", fontSize: "0.72rem" }}
-                                onMouseEnter={(e) => { e.currentTarget.style.background = "#f8f0f0"; e.currentTarget.style.borderColor = "#5b0f0f"; e.currentTarget.style.color = "#5b0f0f"; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#dee2e6"; e.currentTarget.style.color = "#495057"; }}
-                              >
-                                {time}
-                              </button>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  {(hasPrevPage || hasNextPage) && (
+                    <button
+                      onClick={() => goToPage(page + 1)}
+                      disabled={!hasNextPage || isPageLoading}
+                      aria-label="Next days"
+                      className="flex-shrink-0 rounded-full border border-border p-1.5 text-muted-foreground transition-colors hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               </div>
-              )}
+
+              {/* Available times for the focused day */}
+              <div className="space-y-2">
+                <h3 className="text-base font-semibold text-foreground">
+                  {activeDay
+                    ? bookedByDate[activeDay.date]
+                      ? `Your appointment on ${formatDayHeader(activeDay.date)}`
+                      : `Available times for ${formatDayHeader(activeDay.date)}`
+                    : "Available times"}
+                </h3>
+
+                {isPageLoading ? (
+                  <div className="flex items-center justify-center py-10">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  </div>
+                ) : timeSlotsError ? (
+                  <div className="flex items-center justify-center gap-2 py-8 text-sm text-red-600">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" /> {timeSlotsError}
+                  </div>
+                ) : !activeDay ? (
+                  <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                    Select a day to see available times.
+                  </div>
+                ) : bookedByDate[activeDay.date] ? (
+                  // Patient already has an appointment this day — read-only, not editable.
+                  <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 py-8 px-4 text-center">
+                    <div className="flex items-center gap-1.5 text-sm font-medium text-indigo-700">
+                      <CalendarClock className="h-4 w-4 flex-shrink-0" /> Appointment already booked
+                    </div>
+                    <div className="text-sm text-foreground">
+                      {time24ToLabel(bookedByDate[activeDay.date].time)} → {time24ToLabel(bookedByDate[activeDay.date].end_time)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">This time can’t be changed here.</div>
+                  </div>
+                ) : activeDay.is_holiday ? (
+                  <div className="flex flex-col items-center justify-center gap-1 py-10 text-center">
+                    <p className="text-sm font-medium text-foreground">Clinic closed</p>
+                    <p className="text-xs text-muted-foreground">{activeDay.holiday_name || "Holiday"}</p>
+                  </div>
+                ) : activeDaySlots.length === 0 ? (
+                  <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                    No available times for this day.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    {activeDaySlots.map((slot) => {
+                      const isSel = selectedByDay[activeDay.date]?.startTime === slot.time;
+                      return (
+                        <button
+                          key={slot.time}
+                          onClick={() => handleSlotClick(activeDay, slot)}
+                          className={cn(
+                            "rounded-lg border px-3 py-3 text-sm font-medium transition-colors",
+                            isSel
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border bg-card text-foreground hover:border-primary hover:bg-primary/5 hover:text-primary",
+                          )}
+                        >
+                          {slot.time}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Selected Appointments */}
-            <div className="w-full lg:w-64 border border-gray-200 rounded-lg overflow-hidden flex-shrink-0">
-              <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-200" style={{ background: "#f0f8f0" }}>
-                <CalendarCheck className="h-4 w-4" style={{ color: "#198754" }} />
-                <span className="text-sm font-semibold" style={{ color: "#198754" }}>Selected Appointments</span>
+            {/* Right: Your appointments */}
+            <div className="w-full lg:w-72 flex-shrink-0 rounded-lg border border-emerald-200 bg-emerald-50/40 overflow-hidden flex flex-col">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-emerald-200 bg-emerald-50">
+                <CalendarCheck className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                <div>
+                  <div className="text-sm font-semibold text-emerald-700 leading-tight">Your appointments</div>
+                  <div className="text-xs text-emerald-600/80">{selectedCount} of {sessionLimit || "?"} selected</div>
+                </div>
               </div>
-              <div className="p-2 space-y-2.5 max-h-80 overflow-y-auto" style={{ fontSize: "0.78rem" }}>
+              <div className="p-3 space-y-2 max-h-[340px] overflow-y-auto flex-1">
                 {selectedCount === 0 ? (
-                  <p className="text-gray-400 text-center py-3" style={{ fontSize: "0.78rem" }}>No slots selected yet</p>
+                  <p className="text-center text-sm text-muted-foreground py-8 px-2">Select a time to add it here.</p>
                 ) : (
                   Object.keys(selectedByDay).sort().map((date) => {
                     const sel = selectedByDay[date];
                     return (
-                      <div key={date} className="rounded-md bg-white p-2" style={{ border: "1px solid #e9ecef" }}>
+                      <div key={date} className="rounded-md border border-emerald-100 bg-card p-2.5">
                         <div className="flex items-start justify-between gap-2">
-                          <div className="space-y-1.5">
-                            <div className="font-semibold" style={{ color: "#5b0f0f", fontSize: "0.75rem" }}>{formatDayHeader(date)}</div>
-                            <div style={{ color: "#666", fontSize: "0.72rem" }}>{sel.startTime} &rarr; {sel.endTime}</div>
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="text-sm font-semibold text-foreground truncate">{formatDayHeader(date)}</div>
+                            <div className="text-xs text-muted-foreground">{sel.startTime} → {sel.endTime}</div>
                           </div>
                           <button
                             onClick={() => handleDeleteDay(date)}
+                            aria-label={`Remove ${formatDayHeader(date)}`}
                             title="Remove"
-                            className="text-red-500 hover:text-red-700 border border-red-300 rounded p-1 transition-colors flex-shrink-0"
+                            className="flex-shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                           >
-                            <Trash2 className="h-3 w-3" />
+                            <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       </div>
@@ -1140,7 +1131,7 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
         )}
 
         {/* ── Fixed footer ── */}
-        <div className="flex items-center justify-end gap-3 pt-4 border-t border-border flex-shrink-0">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border flex-shrink-0">
           <Button variant="outline" onClick={onClose} disabled={submitting}>
             Close
           </Button>
