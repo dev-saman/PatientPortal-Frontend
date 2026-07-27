@@ -18,6 +18,26 @@ and notable configuration/docs changes.
 
 ---
 
+## 2026-07-27
+
+### Hide the per-card "Cancel" appointment button (UI only)
+> **What:** Removed the red **Cancel** button from each appointment card on the
+> Appointments page (it sat next to **Reschedule**). This is a UI-only change: the
+> button is now gated behind a new module-level flag `SHOW_CANCEL_BUTTON = false`.
+> All cancellation logic remains fully wired and untouched — the cancel modal, the
+> 24h too-soon guard, `openCancelModal` / `closeCancelModal` / `handleCancelSubmit`,
+> all cancel-flow state, and the `Apis.cancelAppointment` POST. To bring the button
+> back, flip `SHOW_CANCEL_BUTTON` to `true`; no other edits needed.
+>
+> **Files/areas:** `client/src/pages/Appointments.tsx` (added `SHOW_CANCEL_BUTTON`
+> constant near `MODIFIABLE_APPOINTMENT_STATUSES`; wrapped the Cancel button JSX in
+> the flag).
+>
+> **Auth / case-scoping / patient-data:** None. No API, auth, or data-scoping
+> behavior changed — purely a visual toggle. `tsc --noEmit` passes clean.
+
+---
+
 ## 2026-07-24
 
 ### Redesign: "Schedule Remaining Appointments" modal (UI/UX only)

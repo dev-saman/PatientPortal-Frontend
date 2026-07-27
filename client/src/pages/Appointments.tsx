@@ -158,6 +158,10 @@ const MODIFIABLE_APPOINTMENT_STATUSES = new Set(["Confirmed"]);
 const canModifyAppointment = (appointment: Appointment): boolean =>
   MODIFIABLE_APPOINTMENT_STATUSES.has(appointmentStatusOf(appointment));
 
+// Toggle to re-enable the per-card "Cancel" button. Set to true to restore it.
+// The cancel modal, handlers, state, and API call remain wired up regardless.
+const SHOW_CANCEL_BUTTON = false;
+
 // Format time to 12-hour format with AM/PM
 const formatTime = (timeString: string): string => {
   if (!timeString) return "";
@@ -1240,18 +1244,21 @@ export default function Appointments() {
                               </Button>
                             </span>
                             {/* Same subtle outline style; a destructive tint (design-system
-                                token, not a hardcoded red) marks it as the cancel action. */}
-                            <span className={cn("inline-flex", !canModify && "cursor-not-allowed")}>
-                              <Button
-                                variant="outline"
-                                disabled={!canModify}
-                                onClick={() => openCancelModal(appointment)}
-                                className="text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
-                              >
-                                <X className="h-4 w-4" />
-                                Cancel
-                              </Button>
-                            </span>
+                                token, not a hardcoded red) marks it as the cancel action.
+                                Hidden via SHOW_CANCEL_BUTTON — flip that flag to restore it. */}
+                            {SHOW_CANCEL_BUTTON && (
+                              <span className={cn("inline-flex", !canModify && "cursor-not-allowed")}>
+                                <Button
+                                  variant="outline"
+                                  disabled={!canModify}
+                                  onClick={() => openCancelModal(appointment)}
+                                  className="text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+                                >
+                                  <X className="h-4 w-4" />
+                                  Cancel
+                                </Button>
+                              </span>
+                            )}
                           </div>
 
                         </div>
