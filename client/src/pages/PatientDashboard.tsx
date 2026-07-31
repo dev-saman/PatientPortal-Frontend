@@ -426,7 +426,7 @@ export default function PatientDashboard() {
                 <>
                   {hasNoUpcomingAppointments ? (
                     <div className="mb-8 py-5">
-                      <p className="text-xl font-bold text-gray-900">No upcoming appointments.</p>
+                      <p className="text-xl font-bold text-gray-900">No upcoming appointments. 1</p>
                       <p className="text-gray-500 mt-1">Schedule a visit to get started.</p>
                     </div>
                   ) : nearestUpcomingAppointment ? (
