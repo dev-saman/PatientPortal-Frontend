@@ -346,7 +346,7 @@ export default function Layout({ children }: LayoutProps) {
                   localStorage.removeItem("ahcs_selected_case_id");
                 }
               }}
-              className="w-full bg-white rounded-sm px-3 py-1.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all border border-[#972527] appearance-none cursor-pointer"
+              className="w-full bg-white rounded-sm px-2 py-1.5 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all border border-[#972527] appearance-none cursor-pointer"
             >
               {caseIds.map((caseItem, index) => (
                 <option
