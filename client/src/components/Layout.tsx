@@ -95,6 +95,23 @@ export default function Layout({ children }: LayoutProps) {
       try {
         const response = await Apis.getCaseIdsByEmail(user.email);
         const data = response?.data?.case_ids || response?.case_ids || response?.data?.data || response?.data || response || [];
+
+        // TEMP DEBUG: inspect the exact case-list shape and the labels the
+        // dropdown will render. Remove once the label change is verified.
+        console.log("[CASE-DROPDOWN] raw response:", response);
+        console.log("[CASE-DROPDOWN] resolved data:", data);
+        if (Array.isArray(data)) {
+          console.log(
+            "[CASE-DROPDOWN] label preview:",
+            data.map((caseItem) => ({
+              value: getCaseIdValue(caseItem),
+              label: getCaseDisplayLabel(caseItem),
+              doi: caseItem?.doi,
+              insurance_type: caseItem?.insurance_type,
+            }))
+          );
+        }
+
         if (Array.isArray(data)) {
           setCaseIds(data);
         }
