@@ -111,19 +111,19 @@ export default function Layout({ children }: LayoutProps) {
 
         // TEMP DEBUG: inspect the exact case-list shape and the labels the
         // dropdown will render. Remove once the label change is verified.
-        console.log("[CASE-DROPDOWN] raw response:", response);
-        console.log("[CASE-DROPDOWN] resolved data:", data);
-        if (Array.isArray(data)) {
-          console.log(
-            "[CASE-DROPDOWN] label preview:",
-            data.map((caseItem) => ({
-              value: getCaseIdValue(caseItem),
-              label: getCaseDisplayLabel(caseItem),
-              doi: caseItem?.doi,
-              insurance_type: caseItem?.insurance_type,
-            }))
-          );
-        }
+        // console.log("[CASE-DROPDOWN] raw response:", response);
+        // console.log("[CASE-DROPDOWN] resolved data:", data);
+        // if (Array.isArray(data)) {
+        //   console.log(
+        //     "[CASE-DROPDOWN] label preview:",
+        //     data.map((caseItem) => ({
+        //       value: getCaseIdValue(caseItem),
+        //       label: getCaseDisplayLabel(caseItem),
+        //       doi: caseItem?.doi,
+        //       insurance_type: caseItem?.insurance_type,
+        //     }))
+        //   );
+        // }
 
         if (Array.isArray(data)) {
           setCaseIds(data);
