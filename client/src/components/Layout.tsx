@@ -61,13 +61,71 @@ export default function Layout({ children }: LayoutProps) {
     return String(caseItem?.case_id || caseItem?.id || caseItem || "");
   };
 
+  // Display-only label for the case dropdown. Never used as an option value or
+  // API param — selection still runs entirely off getCaseIdValue(caseItem).
+  // Fallback order: "MM/DD/YYYY - InsuranceType" > "MM/DD/YYYY" >
+  // "InsuranceType" > the Case ID exactly as it is displayed today.
+  const getCaseDisplayLabel = (caseItem: any): string => {
+    const rawDoi = String(caseItem?.doi ?? "").trim();
+    const insuranceType = String(caseItem?.insurance_type ?? "").trim();
+
+    // Parse YYYY-MM-DD by components to avoid browser timezone shifts.
+    let formattedDoi = "";
+    const dateMatch = rawDoi.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateMatch) {
+      const [, year, month, day] = dateMatch;
+      formattedDoi = `${month}/${day}/${year}`;
+    }
+
+    if (formattedDoi && insuranceType) {
+      return `${formattedDoi} - ${insuranceType}`;
+    }
+    if (formattedDoi) {
+      return formattedDoi;
+    }
+    if (insuranceType) {
+      return insuranceType;
+    }
+    return getCaseIdValue(caseItem);
+  };
+
   useEffect(() => {
     if (!isAuthenticated || !user?.email) return;
 
     const fetchCaseIds = async () => {
       try {
         const response = await Apis.getCaseIdsByEmail(user.email);
-        const data = response?.data?.case_ids || response?.case_ids || response?.data?.data || response?.data || response || [];
+        // Prefer the `cases` array (objects carrying id/doi/insurance_type) so the
+        // dropdown can render a friendly label. Fall back to the legacy `case_ids`
+        // (bare id array) shape when `cases` is absent. Either way, getCaseIdValue()
+        // yields the same numeric id, so selection/localStorage/API params are
+        // unchanged — only the visible label gains doi + insurance_type.
+        const data =
+          response?.data?.cases ||
+          response?.cases ||
+          response?.data?.case_ids ||
+          response?.case_ids ||
+          response?.data?.data ||
+          response?.data ||
+          response ||
+          [];
+
+        // TEMP DEBUG: inspect the exact case-list shape and the labels the
+        // dropdown will render. Remove once the label change is verified.
+        console.log("[CASE-DROPDOWN] raw response:", response);
+        console.log("[CASE-DROPDOWN] resolved data:", data);
+        if (Array.isArray(data)) {
+          console.log(
+            "[CASE-DROPDOWN] label preview:",
+            data.map((caseItem) => ({
+              value: getCaseIdValue(caseItem),
+              label: getCaseDisplayLabel(caseItem),
+              doi: caseItem?.doi,
+              insurance_type: caseItem?.insurance_type,
+            }))
+          );
+        }
+
         if (Array.isArray(data)) {
           setCaseIds(data);
         }
@@ -288,15 +346,16 @@ export default function Layout({ children }: LayoutProps) {
                   localStorage.removeItem("ahcs_selected_case_id");
                 }
               }}
-              className="w-full bg-white rounded-sm px-3 py-1.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all border border-[#972527] appearance-none cursor-pointer"
+              className="w-full bg-white rounded-sm px-2 py-1.5 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all border border-[#972527] appearance-none cursor-pointer"
             >
               {caseIds.map((caseItem, index) => (
                 <option
                   key={typeof caseItem === 'string' || typeof caseItem === 'number' ? caseItem : (caseItem?.id || index)}
                   value={getCaseIdValue(caseItem)}
                   className="cursor-pointer"
+                  title={getCaseDisplayLabel(caseItem)}
                 >
-                  {getCaseIdValue(caseItem)}
+                  {getCaseDisplayLabel(caseItem)}
                 </option>
               ))}
             </select>
