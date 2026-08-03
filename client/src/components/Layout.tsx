@@ -60,6 +60,34 @@ export default function Layout({ children }: LayoutProps) {
     return String(caseItem?.case_id || caseItem?.id || caseItem || "");
   };
 
+  // Display-only label for the case dropdown. Never used as an option value or
+  // API param — selection still runs entirely off getCaseIdValue(caseItem).
+  // Fallback order: "MM/DD/YYYY - InsuranceType" > "MM/DD/YYYY" >
+  // "InsuranceType" > the Case ID exactly as it is displayed today.
+  const getCaseDisplayLabel = (caseItem: any): string => {
+    const rawDoi = String(caseItem?.doi ?? "").trim();
+    const insuranceType = String(caseItem?.insurance_type ?? "").trim();
+
+    // Parse YYYY-MM-DD by components to avoid browser timezone shifts.
+    let formattedDoi = "";
+    const dateMatch = rawDoi.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateMatch) {
+      const [, year, month, day] = dateMatch;
+      formattedDoi = `${month}/${day}/${year}`;
+    }
+
+    if (formattedDoi && insuranceType) {
+      return `${formattedDoi} - ${insuranceType}`;
+    }
+    if (formattedDoi) {
+      return formattedDoi;
+    }
+    if (insuranceType) {
+      return insuranceType;
+    }
+    return getCaseIdValue(caseItem);
+  };
+
   useEffect(() => {
     if (!isAuthenticated || !user?.email) return;
 
@@ -295,8 +323,9 @@ export default function Layout({ children }: LayoutProps) {
                   key={typeof caseItem === 'string' || typeof caseItem === 'number' ? caseItem : (caseItem?.id || index)}
                   value={getCaseIdValue(caseItem)}
                   className="cursor-pointer"
+                  title={getCaseDisplayLabel(caseItem)}
                 >
-                  {getCaseIdValue(caseItem)}
+                  {getCaseDisplayLabel(caseItem)}
                 </option>
               ))}
             </select>
