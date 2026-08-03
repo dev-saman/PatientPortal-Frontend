@@ -268,7 +268,7 @@ export default function Layout({ children }: LayoutProps) {
         <div className="px-4 py-2">
           <div className="flex items-center gap-1.5 w-full">
             <p className="font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">
-              Case Id 1:
+              Case Id:
             </p>
             <div className="relative flex-1 min-w-0">
             <select
