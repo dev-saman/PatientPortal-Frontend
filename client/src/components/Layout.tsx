@@ -94,7 +94,20 @@ export default function Layout({ children }: LayoutProps) {
     const fetchCaseIds = async () => {
       try {
         const response = await Apis.getCaseIdsByEmail(user.email);
-        const data = response?.data?.case_ids || response?.case_ids || response?.data?.data || response?.data || response || [];
+        // Prefer the `cases` array (objects carrying id/doi/insurance_type) so the
+        // dropdown can render a friendly label. Fall back to the legacy `case_ids`
+        // (bare id array) shape when `cases` is absent. Either way, getCaseIdValue()
+        // yields the same numeric id, so selection/localStorage/API params are
+        // unchanged — only the visible label gains doi + insurance_type.
+        const data =
+          response?.data?.cases ||
+          response?.cases ||
+          response?.data?.case_ids ||
+          response?.case_ids ||
+          response?.data?.data ||
+          response?.data ||
+          response ||
+          [];
 
         // TEMP DEBUG: inspect the exact case-list shape and the labels the
         // dropdown will render. Remove once the label change is verified.
