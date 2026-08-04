@@ -161,13 +161,13 @@ export default function PatientFunnelAccordion({
           <AccordionItem
             key={String(funnel.funnelId)}
             value={String(funnel.funnelId)}
-            className="border border-border border-l-4 rounded-xl bg-card shadow-soft overflow-hidden last:border-b data-[state=open]:shadow-md transition-shadow"
+            className={`border border-border border-l-4 ${accentClass} rounded-xl bg-card shadow-soft overflow-hidden data-[state=open]:shadow-md transition-shadow`}
           >
-            {/* Header row: trigger (name + progress + badge) and CTA are siblings
-                so the CTA button is never nested inside the trigger button. */}
-            <div className={`flex items-center gap-2 sm:gap-4 px-4 ${accentClass}`}>
-              <AccordionTrigger className="flex-1 min-w-0 py-4 hover:no-underline">
-                <div className="flex flex-col gap-2 min-w-0 pr-2">
+            {/* Header row: trigger (name + progress) and CTA are siblings so the
+                CTA button is never nested inside the trigger button. */}
+            <div className="flex items-center gap-3 sm:gap-4 pl-4 pr-3 sm:pr-4">
+              <AccordionTrigger className="flex-1 min-w-0 py-3.5 items-center hover:no-underline [&>svg]:ml-2 [&>svg]:shrink-0">
+                <div className="flex flex-col gap-2 flex-1 min-w-0">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileText className={`h-4 w-4 shrink-0 ${isComplete ? "text-green-600" : isDashboard ? "text-red-700" : "text-primary"}`} />
                     <span className="font-semibold text-foreground truncate">{funnel.funnelName}</span>
@@ -183,13 +183,13 @@ export default function PatientFunnelAccordion({
                     </Badge>
                   </div>
                   {progress.total > 0 && (
-                    <div className="flex items-center gap-3 pr-2">
+                    <div className="flex items-center gap-3 min-w-0">
                       <Progress
                         value={progress.progress}
-                        className="h-1.5 w-32 sm:w-48 bg-secondary"
+                        className="h-1.5 flex-1 min-w-[80px] max-w-[280px] bg-secondary"
                         indicatorClassName={isComplete ? "bg-green-600" : isDashboard ? "bg-red-700" : "bg-primary"}
                       />
-                      <span className="text-xs text-muted-foreground whitespace-nowrap font-normal">
+                      <span className="text-xs text-muted-foreground whitespace-nowrap font-normal shrink-0">
                         {progress.completed} of {progress.total} completed
                       </span>
                     </div>
@@ -198,11 +198,11 @@ export default function PatientFunnelAccordion({
               </AccordionTrigger>
               <Button
                 size="sm"
-                className={`shrink-0 ${isDashboard ? "bg-red-700 hover:bg-red-800 text-white" : "bg-primary hover:bg-primary/90"}`}
+                className={`shrink-0 min-w-[7rem] whitespace-nowrap ${isDashboard ? "bg-red-700 hover:bg-red-800 text-white" : "bg-primary hover:bg-primary/90"}`}
                 disabled={ctaDisabled}
                 onClick={() => onStart(funnel)}
               >
-                {isStarting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                {isStarting ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
                 {ctaLabel}
               </Button>
             </div>
