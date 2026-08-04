@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Calendar,
   MessageSquare,
@@ -23,6 +23,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSelectedCase } from "@/contexts/SelectedCaseContext";
 import RecentActivity from "@/components/RecentActivity";
 import FormViewModal from "@/components/FormViewModal";
+import PatientFunnelCard from "@/components/PatientFunnelCard";
+import { fetchCaseFunnelsWithForms, sumPendingForms, PatientAssignedFunnel } from "@/lib/patientFunnels";
 import Apis from "@/lib/Apis";
 import { getApiErrorMessage } from "@/lib/apiError";
 import {
@@ -76,11 +78,14 @@ export default function PatientDashboard() {
   const [nearestUpcomingAppointment, setNearestUpcomingAppointment] = useState<Appointment | null>(null);
   const [isUpcomingAppointmentLoading, setIsUpcomingAppointmentLoading] = useState(false);
   const [hasNoUpcomingAppointments, setHasNoUpcomingAppointments] = useState(false);
-  const [selectedFunnelName, setSelectedFunnelName] = useState("Pre-visit Tasks");
-  const [selectedFunnelId, setSelectedFunnelId] = useState<string | number | null>(null);
-  const [selectedFunnelForms, setSelectedFunnelForms] = useState<any[]>([]);
+  // Every funnel assigned to the active case (each with its own forms). The
+  // single-funnel presentation below reads funnels[0]; 2+ funnels render as a grid.
+  const [funnels, setFunnels] = useState<PatientAssignedFunnel[]>([]);
   const [isFunnelFormsLoading, setIsFunnelFormsLoading] = useState(false);
-  const [hasNoFunnels, setHasNoFunnels] = useState(false);
+  const [funnelsErrorMsg, setFunnelsErrorMsg] = useState<string | null>(null);
+  const [dashboardStartingFunnelId, setDashboardStartingFunnelId] = useState<string | number | null>(null);
+  // Monotonic request id so a slow case's response can't overwrite a newer one.
+  const funnelsRequestRef = useRef(0);
 
   // Ready flags for the two APIs fetched directly in this component.
   // RecentActivity is excluded — it mounts after the loader clears and shows
@@ -144,77 +149,39 @@ export default function PatientDashboard() {
     fetchUpcomingAppointment();
   }, [selectedCaseId]);
 
-  useEffect(() => {
-    if (!selectedCaseId) return;
-
-    const fetchDashboardFunnelForms = async () => {
-      try {
-        setIsFunnelFormsLoading(true);
-        const funnelsResponse = await Apis.getPatientFunnels();
-        const funnelCandidates = [
-          funnelsResponse,
-          funnelsResponse?.data,
-          funnelsResponse?.data?.data,
-          funnelsResponse?.funnels,
-          funnelsResponse?.funnel,
-          funnelsResponse?.patient_funnels,
-          funnelsResponse?.data?.funnels,
-          funnelsResponse?.data?.funnel,
-          funnelsResponse?.data?.patient_funnels,
-          funnelsResponse?.data?.data?.funnels,
-          funnelsResponse?.data?.data?.funnel,
-          funnelsResponse?.data?.data?.patient_funnels,
-        ];
-        const funnels = funnelCandidates.find((candidate) => Array.isArray(candidate));
-        const selectedFunnel = Array.isArray(funnels) ? funnels[0] : null;
-
-        if (!selectedFunnel) {
-          setHasNoFunnels(true);
-          setSelectedFunnelForms([]);
-          setSelectedFunnelName("Pre-visit Tasks");
-          setSelectedFunnelId(null);
-          return;
-        }
-
-        setHasNoFunnels(false);
-        const funnelId = selectedFunnel?.id ?? selectedFunnel?.funnel_id;
-        const funnelName = selectedFunnel?.funnel_name || selectedFunnel?.name || selectedFunnel?.title || "Pre-visit Tasks";
-        setSelectedFunnelName(funnelName);
-        setSelectedFunnelId(funnelId ?? null);
-
-        if (funnelId === undefined || funnelId === null || funnelId === "") {
-          setSelectedFunnelForms([]);
-          return;
-        }
-
-        const formsResponse = await Apis.getPatientFunnelSubmissionDetails(funnelId);
-        const formCandidates = [
-          formsResponse?.data?.data?.forms,
-          formsResponse?.data?.forms,
-          formsResponse?.forms,
-          formsResponse?.data?.data,
-          formsResponse?.data,
-          formsResponse,
-        ];
-        const forms = formCandidates.find((candidate) => Array.isArray(candidate));
-        setSelectedFunnelForms(Array.isArray(forms) ? forms : []);
-      } catch (error) {
-        console.error("Error fetching dashboard funnel forms:", error);
-        toast.error(getApiErrorMessage(error) || "Failed to load funnel forms", {
-          style: { backgroundColor: "#ef4444", color: "#ffffff" },
-        });
-        setSelectedFunnelForms([]);
-        setSelectedFunnelName("Pre-visit Tasks");
-        setSelectedFunnelId(null);
-        setHasNoFunnels(false);
-      } finally {
+  // Fetch ALL funnels assigned to the active case, each with its own forms.
+  // A monotonic request id prevents a slow previous-case response from
+  // overwriting the newly selected case's data.
+  const loadDashboardFunnels = React.useCallback(async () => {
+    const requestId = ++funnelsRequestRef.current;
+    try {
+      setIsFunnelFormsLoading(true);
+      setFunnelsErrorMsg(null);
+      const result = await fetchCaseFunnelsWithForms();
+      if (requestId !== funnelsRequestRef.current) return; // superseded by a newer case
+      setFunnels(result);
+    } catch (error) {
+      if (requestId !== funnelsRequestRef.current) return;
+      const message = getApiErrorMessage(error) || "Failed to load funnel forms";
+      console.error("Error fetching dashboard funnels:", error);
+      toast.error(message, { style: { backgroundColor: "#ef4444", color: "#ffffff" } });
+      setFunnels([]);
+      setFunnelsErrorMsg(message);
+    } finally {
+      if (requestId === funnelsRequestRef.current) {
         setIsFunnelFormsLoading(false);
         setFunnelsReady(true);
       }
-    };
+    }
+  }, []);
 
-    fetchDashboardFunnelForms();
-  }, [selectedCaseId]);
+  useEffect(() => {
+    if (!selectedCaseId) return;
+    // Clear the previous case's funnels immediately so they never flash while
+    // the new case loads.
+    setFunnels([]);
+    loadDashboardFunnels();
+  }, [selectedCaseId, loadDashboardFunnels]);
 
   const getFormName = (form: any): string => form?.form_title || form?.form_name || form?.title || form?.name || "Untitled Form";
   const isFormCompleted = (form: any): boolean => form?.submission_status === "completed";
@@ -344,6 +311,26 @@ export default function PatientDashboard() {
       setFunnelFormDownloadLoadingId(null);
     }
   };
+
+  // Navigate to a specific funnel from the multi-funnel grid. Uses that card's
+  // own funnelId (never the first funnel) and guards against double-clicks.
+  const handleStartFunnel = (funnel: PatientAssignedFunnel) => {
+    const funnelId = funnel.funnelId;
+    if (funnelId === undefined || funnelId === null || funnelId === "") return;
+    if (dashboardStartingFunnelId !== null) return;
+    setDashboardStartingFunnelId(funnelId);
+    setLocation(`/form/${encodeURIComponent(String(funnelId))}`);
+  };
+
+  // Single-funnel presentation derives from the first assigned funnel; the grid
+  // (2+ funnels) renders every funnel independently.
+  const primaryFunnel = funnels[0];
+  const selectedFunnelForms = primaryFunnel?.forms ?? [];
+  const selectedFunnelName = primaryFunnel?.funnelName ?? "Pre-visit Tasks";
+  const selectedFunnelId: string | number | null = primaryFunnel ? primaryFunnel.funnelId : null;
+  const hasNoFunnels = funnelsReady && !funnelsErrorMsg && funnels.length === 0;
+  const isMultiFunnel = funnels.length > 1;
+
   const completedFormsCount = selectedFunnelForms.filter((form) => isFormCompleted(form)).length;
   const totalFormsCount = selectedFunnelForms.length;
   const progressValue = totalFormsCount > 0 ? (completedFormsCount / totalFormsCount) * 100 : 0;
@@ -360,7 +347,9 @@ export default function PatientDashboard() {
       ? `Next: ${formatShortDate(nearestUpcomingAppointment.attend_date)}`
       : "No upcoming visits";
 
-  const pendingFormsCount = totalFormsCount - completedFormsCount;
+  // Accurate pending total across every assigned funnel (equals the single
+  // funnel's pending count when only one funnel is assigned).
+  const pendingFormsCount = sumPendingForms(funnels);
   const formsSubtext = isFunnelFormsLoading
     ? "Loading…"
     : pendingFormsCount > 0
@@ -500,10 +489,19 @@ export default function PatientDashboard() {
                     </>
                   ) : null}
 
-                  <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    {hasNoFunnels ? (
-                      <div className="text-sm font-medium text-gray-700">No funnels available</div>
-                    ) : (
+                  {funnelsErrorMsg ? (
+                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 flex items-center justify-between gap-4">
+                      <span className="text-sm text-gray-600">{funnelsErrorMsg}</span>
+                      <Button variant="outline" size="sm" className="shrink-0" onClick={() => loadDashboardFunnels()}>
+                        Retry
+                      </Button>
+                    </div>
+                  ) : hasNoFunnels ? (
+                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                      <div className="text-sm font-medium text-gray-700">No forms are currently assigned to this case.</div>
+                    </div>
+                  ) : isMultiFunnel ? null : (
+                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
                       <>
                         <div className="flex items-center justify-between gap-4 mb-4">
                           <div className="flex-1 min-w-0 space-y-2">
@@ -579,12 +577,35 @@ export default function PatientDashboard() {
                           )}
                         </div>
                       </>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </>
               )}
             </CardContent>
           </Card>
+
+          {/* Assigned funnels grid — shown only when the case has 2+ funnels.
+              One funnel keeps the single card inside the Upcoming Visit card above. */}
+          {isMultiFunnel && !funnelsErrorMsg && (
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 mb-4">Your Assigned Forms</h2>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+                {funnels.map((funnel) => (
+                  <PatientFunnelCard
+                    key={String(funnel.funnelId)}
+                    variant="dashboard"
+                    funnel={funnel}
+                    isStarting={dashboardStartingFunnelId === funnel.funnelId}
+                    onStart={handleStartFunnel}
+                    onViewForm={handleViewFunnelForm}
+                    onDownloadForm={handleDownloadFunnelFormPDF}
+                    viewLoadingId={funnelFormViewLoadingId}
+                    downloadLoadingId={funnelFormDownloadLoadingId}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Recent Activity */}
           <RecentActivity />

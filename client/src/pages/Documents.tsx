@@ -19,10 +19,16 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import Apis from "@/lib/Apis";
+import PatientFunnelCard from "@/components/PatientFunnelCard";
+import {
+  fetchCaseFunnelsWithForms,
+  sumPendingForms,
+  PatientAssignedFunnel,
+} from "@/lib/patientFunnels";
 import { getApiErrorMessage } from "@/lib/apiError";
 import { getActiveCaseId } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
@@ -139,12 +145,13 @@ const staticAdministrativeDocuments = [
 export default function Documents() {
   type DocumentTabType = "clinical" | "admin";
   const [oldFormsData, setOldFormsData] = useState<SubmittedForm[]>([]);
-  const [patientFunnels, setPatientFunnels] = useState<PatientFunnel[]>([]);
+  // Every funnel assigned to the active case, each with its own forms. The
+  // single-funnel Action Required card reads funnels[0]; 2+ render as a grid.
+  const [funnels, setFunnels] = useState<PatientAssignedFunnel[]>([]);
   const [isFunnelsLoading, setIsFunnelsLoading] = useState(false);
   const [funnelsError, setFunnelsError] = useState<string | null>(null);
-  const [selectedFunnelForms, setSelectedFunnelForms] = useState<FunnelSubmissionForm[]>([]);
-  const [selectedFunnelFormsError, setSelectedFunnelFormsError] = useState<string | null>(null);
-  const [isSelectedFunnelFormsLoading, setIsSelectedFunnelFormsLoading] = useState(false);
+  // Monotonic request id so a slow previous-case response can't overwrite a newer one.
+  const funnelsRequestRef = useRef(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -252,57 +259,41 @@ export default function Documents() {
   // to avoid fetching data that is never displayed. Re-add them here (gated on the
   // active tab) if/when those tables are switched back to dynamic data.
 
-  // Fetch patient funnels on component mount
-  useEffect(() => {
-    const fetchPatientFunnels = async () => {
-      try {
-        setIsFunnelsLoading(true);
-        const response = await Apis.getPatientFunnels();
+  // Fetch every funnel assigned to the active case (each with its own forms) in
+  // a single pass. Re-runs on case switch because Layout remounts the page. A
+  // monotonic request id guards against a stale response overwriting a newer one.
+  const loadFunnels = async () => {
+    const requestId = ++funnelsRequestRef.current;
+    try {
+      setIsFunnelsLoading(true);
+      setFunnelsError(null);
+      const result = await fetchCaseFunnelsWithForms();
+      if (requestId !== funnelsRequestRef.current) return; // superseded
 
-        if (response?.success === false) {
-          throw new Error(response?.message || response?.error || "");
-        }
+      setFunnels(result);
 
-        const funnelCandidates = [
-          response,
-          response?.data,
-          response?.data?.data,
-          response?.funnels,
-          response?.funnel,
-          response?.patient_funnels,
-          response?.data?.funnels,
-          response?.data?.funnel,
-          response?.data?.patient_funnels,
-          response?.data?.data?.funnels,
-          response?.data?.data?.funnel,
-          response?.data?.data?.patient_funnels,
-        ];
-        const funnelList = funnelCandidates.find((candidate) => Array.isArray(candidate));
-
-        const funnels = Array.isArray(funnelList) ? funnelList : [];
-        setPatientFunnels(funnels);
-
-        // Build completion status map directly from get-patient-funnels response
-        const completionMap: Record<string, boolean> = {};
-        funnels.forEach((f: any) => {
-          const id = f.id ?? f.funnel_id;
-          if (id !== undefined && id !== null) {
-            completionMap[String(id)] = f.submission_status === "completed";
-          }
-        });
-        setCompletedFunnels(completionMap);
-
-        setFunnelsError(null);
-      } catch (err) {
-        console.error("Error fetching patient funnels:", err);
-        setFunnelsError(getApiErrorMessage(err) || null);
-        setPatientFunnels([]);
-      } finally {
+      // Build completion status map from funnel-level submission_status.
+      const completionMap: Record<string, boolean> = {};
+      result.forEach((f) => {
+        completionMap[String(f.funnelId)] = f.submissionStatus === "completed";
+      });
+      setCompletedFunnels(completionMap);
+    } catch (err) {
+      if (requestId !== funnelsRequestRef.current) return;
+      console.error("Error fetching patient funnels:", err);
+      setFunnelsError(getApiErrorMessage(err) || null);
+      setFunnels([]);
+    } finally {
+      if (requestId === funnelsRequestRef.current) {
         setIsFunnelsLoading(false);
       }
-    };
+    }
+  };
 
-    fetchPatientFunnels();
+  // Fetch patient funnels on component mount (and on case switch via remount)
+  useEffect(() => {
+    loadFunnels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fetch clinical notes on mount; re-runs automatically on case change
@@ -450,6 +441,16 @@ export default function Documents() {
     }
   };
 
+  // Start/Resume from a multi-funnel grid card. Uses that card's own funnelId
+  // (never the first funnel) and blocks double navigation via editingFunnelId.
+  const handleStartFunnelCard = (funnel: PatientAssignedFunnel) => {
+    const funnelId = funnel.funnelId;
+    if (funnelId === undefined || funnelId === null || funnelId === "") return;
+    if (editingFunnelId !== null) return;
+    setEditingFunnelId(funnelId);
+    setLocation(`/form/${encodeURIComponent(String(funnelId))}`);
+  };
+
   const handleViewFunnelForm = async (form: FunnelSubmissionForm) => {
     const formName = getFormName(form);
     const formKey = form.id ?? form.form_id ?? formName;
@@ -518,43 +519,6 @@ export default function Documents() {
       setFunnelFormDownloadLoadingId(null);
     }
   };
-
-  useEffect(() => {
-    const selectedFunnel = patientFunnels[0];
-    const funnelId = selectedFunnel ? getFunnelId(selectedFunnel) : undefined;
-
-    if (funnelId === undefined || funnelId === null || funnelId === "") {
-      setSelectedFunnelForms([]);
-      setSelectedFunnelFormsError(null);
-      return;
-    }
-
-    const fetchSelectedFunnelForms = async () => {
-      try {
-        setIsSelectedFunnelFormsLoading(true);
-        const response = await Apis.getPatientFunnelSubmissionDetails(funnelId);
-        const formCandidates = [
-          response?.data?.data?.forms,
-          response?.data?.forms,
-          response?.forms,
-          response?.data?.data,
-          response?.data,
-          response,
-        ];
-        const forms = formCandidates.find((candidate) => Array.isArray(candidate));
-        setSelectedFunnelForms(Array.isArray(forms) ? forms : []);
-        setSelectedFunnelFormsError(null);
-      } catch (err) {
-        console.error("Error fetching selected funnel forms:", err);
-        setSelectedFunnelForms([]);
-        setSelectedFunnelFormsError(getApiErrorMessage(err) || null);
-      } finally {
-        setIsSelectedFunnelFormsLoading(false);
-      }
-    };
-
-    fetchSelectedFunnelForms();
-  }, [patientFunnels]);
 
   // Helper: extract a single PDF from a ZIP blob, or return the blob as-is if it's already a PDF
   const extractPdfFromResponse = async (responseBlob: Blob): Promise<Blob> => {
@@ -1539,7 +1503,7 @@ export default function Documents() {
 
 
   // Page-level loader: show single spinner until all data is loaded
-  if (isFunnelsLoading || isSelectedFunnelFormsLoading) {
+  if (isFunnelsLoading) {
     return <PageLoader />;
   }
 
@@ -1553,11 +1517,71 @@ export default function Documents() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Action Required Section */}
         {(() => {
-          const selectedFunnel = patientFunnels[0];
-          const selectedFunnelName = selectedFunnel ? getFunnelName(selectedFunnel) : "Funnel";
-          const hasNoFunnels = !funnelsError && patientFunnels.length === 0;
+          // Error state — do not silently fall back to the first funnel.
+          if (funnelsError) {
+            return (
+              <Card className="lg:col-span-3 shadow-soft border-l-4 border-l-red-400">
+                <CardHeader>
+                  <CardTitle>Action Required</CardTitle>
+                  <CardDescription>We could not load the assigned forms.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between gap-4 p-4 bg-secondary/30 rounded-xl border border-border">
+                    <span className="text-sm text-muted-foreground">{funnelsError}</span>
+                    <Button variant="outline" size="sm" className="shrink-0" onClick={() => loadFunnels()}>
+                      Retry
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          }
+
+          // Multiple assigned funnels — one heading, one grid, independent cards.
+          if (funnels.length > 1) {
+            const overallPending = sumPendingForms(funnels);
+            return (
+              <div className="lg:col-span-3 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold leading-none">Action Required</h2>
+                    <p className="text-sm text-muted-foreground mt-1">Please complete these forms before your visit</p>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={overallPending === 0 ? "bg-green-50 text-green-700 border-green-200 shrink-0" : "bg-yellow-50 text-yellow-700 border-yellow-200 shrink-0"}
+                  >
+                    {overallPending === 0 ? "All Complete" : `${overallPending} Pending`}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+                  {funnels.map((funnel) => (
+                    <PatientFunnelCard
+                      key={String(funnel.funnelId)}
+                      variant="documents"
+                      funnel={funnel}
+                      isStarting={editingFunnelId === funnel.funnelId}
+                      onStart={handleStartFunnelCard}
+                      onViewForm={handleViewFunnelForm}
+                      onDownloadForm={handleDownloadFunnelFormPDF}
+                      viewLoadingId={funnelFormViewLoadingId}
+                      downloadLoadingId={funnelFormDownloadLoadingId}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          }
+
+          // Zero or one funnel — preserve the existing single-funnel card exactly.
+          const selectedFunnel = funnels[0];
+          const selectedFunnelName = selectedFunnel ? selectedFunnel.funnelName : "Funnel";
+          const hasNoFunnels = !funnelsError && funnels.length === 0;
+          const selectedFunnelForms = selectedFunnel?.forms ?? [];
+          const selectedFunnelFormsError = selectedFunnel?.formsError ?? null;
+          const isSelectedFunnelFormsLoading = false;
           const pendingCount = selectedFunnelForms.filter((form) => !isFormCompleted(form)).length;
-          const funnelStartId = selectedFunnel ? getFunnelId(selectedFunnel) : undefined;
+          const funnelStartId = selectedFunnel ? selectedFunnel.funnelId : undefined;
           const hasFunnelStartId = funnelStartId !== undefined && funnelStartId !== null && funnelStartId !== "";
           const totalFormsCount = selectedFunnelForms.length;
           const completedFormsCount = totalFormsCount - pendingCount;
@@ -1566,7 +1590,7 @@ export default function Documents() {
           const noneCompleted = pendingCount === totalFormsCount;
           const funnelCtaLabel = totalFormsCount === 0 ? "Start Form" : allFormsCompleted ? "Form Completed" : noneCompleted ? "Start Form" : "Resume Form";
           const isStartingFunnel = editingFunnelId !== null && funnelStartId !== undefined && editingFunnelId === funnelStartId;
-          const canStartFunnel = !funnelsError && !isSelectedFunnelFormsLoading && !selectedFunnelFormsError && patientFunnels.length > 0 && selectedFunnelForms.length > 0;
+          const canStartFunnel = !funnelsError && !isSelectedFunnelFormsLoading && !selectedFunnelFormsError && funnels.length > 0 && selectedFunnelForms.length > 0;
           return (
         <Card className={`lg:col-span-3 shadow-soft border-l-4 ${hasNoFunnels ? "border-l-gray-300" : pendingCount === 0 ? "border-l-green-500" : "border-l-yellow-500"}`}>
           <CardHeader>
@@ -1639,9 +1663,9 @@ export default function Documents() {
                   <div className="p-4 text-sm text-muted-foreground bg-secondary/30 rounded-xl border border-border">
                     {selectedFunnelFormsError}
                   </div>
-                ) : patientFunnels.length === 0 ? (
+                ) : funnels.length === 0 ? (
                   <div className="p-4 text-sm text-muted-foreground bg-secondary/30 rounded-xl border border-border">
-                    No funnels available
+                    No assigned forms were found for this case.
                   </div>
                 ) : selectedFunnelForms.length === 0 ? (
                   <div className="p-4 text-sm text-muted-foreground bg-secondary/30 rounded-xl border border-border">
