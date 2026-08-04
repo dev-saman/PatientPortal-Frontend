@@ -92,47 +92,48 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     if (!isAuthenticated || !user?.email) return;
 
+    // Retry on transient failures (e.g. a flaky CORS preflight / network blip),
+    // otherwise a single failed request leaves the sidebar case list empty and
+    // shows "No Case Found" even though the endpoint returns the cases fine.
+    const parseCaseList = (response: any) =>
+      response?.data?.cases ||
+      response?.cases ||
+      response?.data?.case_ids ||
+      response?.case_ids ||
+      response?.data?.data ||
+      response?.data ||
+      response ||
+      [];
+
     const fetchCaseIds = async () => {
-      try {
-        const response = await Apis.getCaseIdsByEmail(user.email);
-        // Prefer the `cases` array (objects carrying id/doi/insurance_type) so the
-        // dropdown can render a friendly label. Fall back to the legacy `case_ids`
-        // (bare id array) shape when `cases` is absent. Either way, getCaseIdValue()
-        // yields the same numeric id, so selection/localStorage/API params are
-        // unchanged — only the visible label gains doi + insurance_type.
-        const data =
-          response?.data?.cases ||
-          response?.cases ||
-          response?.data?.case_ids ||
-          response?.case_ids ||
-          response?.data?.data ||
-          response?.data ||
-          response ||
-          [];
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const response = await Apis.getCaseIdsByEmail(user.email);
+          // Prefer the `cases` array (objects carrying id/doi/insurance_type) so the
+          // dropdown can render a friendly label. Fall back to the legacy `case_ids`
+          // (bare id array) shape when `cases` is absent. Either way, getCaseIdValue()
+          // yields the same numeric id, so selection/localStorage/API params are
+          // unchanged — only the visible label gains doi + insurance_type.
+          const data = parseCaseList(response);
 
-        // TEMP DEBUG: inspect the exact case-list shape and the labels the
-        // dropdown will render. Remove once the label change is verified.
-        console.log("[CASE-DROPDOWN] raw response:", response);
-        console.log("[CASE-DROPDOWN] resolved data:", data);
-        if (Array.isArray(data)) {
-          console.log(
-            "[CASE-DROPDOWN] label preview:",
-            data.map((caseItem) => ({
-              value: getCaseIdValue(caseItem),
-              label: getCaseDisplayLabel(caseItem),
-              doi: caseItem?.doi,
-              insurance_type: caseItem?.insurance_type,
-            }))
-          );
-        }
+          if (Array.isArray(data)) {
+            setCaseIds(data);
+            setCaseIdsFetchDone(true);
+            return;
+          }
 
-        if (Array.isArray(data)) {
-          setCaseIds(data);
+          // Unexpected shape — treat as a transient failure and retry.
+          throw new Error("Unexpected case-list response shape");
+        } catch (error) {
+          console.error(`Failed to fetch case IDs (attempt ${attempt}/${maxAttempts}):`, error);
+          if (attempt < maxAttempts) {
+            // Brief backoff before retrying the transient failure.
+            await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+            continue;
+          }
+          setCaseIdsFetchDone(true);
         }
-      } catch (error) {
-        console.error("Failed to fetch case IDs:", error);
-      } finally {
-        setCaseIdsFetchDone(true);
       }
     };
     fetchCaseIds();
