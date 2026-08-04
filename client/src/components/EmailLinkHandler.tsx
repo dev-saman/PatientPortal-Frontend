@@ -51,6 +51,17 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
     const handleMagicLink = async () => {
       setIsHandlingMagicLink(true);
       try {
+        // Strip the encoded magic-link query from the address bar now that
+        // `search` is captured. wouter's setLocation is a no-op when the target
+        // equals the current path, so a link at "/" that routes back to "/"
+        // (e.g. an already-logged-in multi-funnel link) would otherwise leave
+        // the query in the URL — keeping hasPendingMagicLink true and pinning
+        // this handler on the loading spinner forever. Clearing it here makes
+        // every subsequent navigation behave regardless of target path.
+        if (typeof window !== "undefined" && window.history?.replaceState) {
+          window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+        }
+
         const decoded = decodeEmailLinkParams(search);
         if (!decoded) {
           setLocation("/");
