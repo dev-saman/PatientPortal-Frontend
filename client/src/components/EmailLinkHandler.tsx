@@ -4,6 +4,7 @@ import {
   isEncodedEmailLink,
   decodeEmailLinkParams,
   storeEmailLinkData,
+  type DecodedEmailLinkData,
 } from "@/lib/decodeEmailLink";
 import { useAuth } from "@/contexts/AuthContext";
 import Apis from "@/lib/Apis";
@@ -18,6 +19,42 @@ import {
 } from "@/lib/magicLink";
 import { patientIdMatchesToken, applyCaseContext, getActiveCaseId } from "@/lib/caseContext";
 import { isMultipleFunnelsEnabled, storeMultipleFunnelPendingRedirect } from "@/lib/multipleFunnels";
+
+/**
+ * Decide whether the magic link's patient already has an account (should be
+ * sent to log in) versus still needing to set a password (Create Password).
+ *
+ * The URL `flag` is baked by the backend when the link is generated, so it can
+ * be STALE in one direction: a `no_user` link reused after the account was
+ * created still carries `no_user`, which previously stranded returning patients
+ * on the Create Password page (they then hit an "User already exists" error and
+ * were bounced to login). We therefore treat the patient as existing when
+ * EITHER signal says so:
+ *   - URL flag === "user_exists": trust it directly. It is authoritative at
+ *     send time, and short-circuiting here means a flaky verify response can
+ *     never push a genuine existing-user link onto /reset-password — the exact
+ *     regression that made us stop relying on verify for email links.
+ *   - live magic-link/verify === "exist": catches the reused-`no_user` case the
+ *     stale URL flag misses. Only reached for non-`user_exists` links.
+ *
+ * A verify failure falls back to the URL flag (non-`user_exists` → new user) so
+ * a transient network error never blocks a real new patient from creating a
+ * password. Applies uniformly to email and sms, single- and multi-funnel links.
+ */
+async function resolvePatientExists(decoded: DecodedEmailLinkData): Promise<boolean> {
+  if (decoded.flag === "user_exists") return true;
+
+  const patientId = String(decoded.patient_id || "").trim();
+  if (!patientId) return false;
+
+  try {
+    const verifyResponse = await Apis.verifyMagicLink(patientId);
+    return verifyResponse?.flag?.toLowerCase() === "exist";
+  } catch {
+    // Could not verify — fall back to the URL flag (non-user_exists → new user).
+    return false;
+  }
+}
 
 /**
  * EmailLinkHandler
@@ -87,8 +124,6 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
         const canMultiFunnel = isMultiFunnel && hasMultiFunnelIds;
 
         const hasToken = !!localStorage.getItem("ahcs_token");
-        const isSmsSource = decoded.source?.toLowerCase() === "sms";
-        const isEmailSource = decoded.source?.toLowerCase() === "email";
         const decodedCaseId = String(decoded.case_id || "").trim();
         const currentCaseIdAtEntry = getActiveCaseId();
 
@@ -147,31 +182,15 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
             return;
           }
 
-          // Not logged in: route through the correct pre-auth step. For SMS we
-          // still verify to choose create-password vs login; both converge on
-          // the modal after authentication.
-          if (isSmsSource) {
-            try {
-              const verifyResponse = await Apis.verifyMagicLink(decoded.patient_id);
-              const verifyFlag = verifyResponse?.flag?.toLowerCase();
-              if (verifyFlag === "exist") {
-                setLocation("/login");
-              } else {
-                storeEmailLinkData({ ...decoded, form: validFormId || decoded.form || "0" });
-                setLocation("/reset-password");
-              }
-            } catch (error) {
-              toast({
-                title: "Verification Failed",
-                description: getApiErrorMessage(error),
-                variant: "destructive",
-              });
-              setLocation("/");
-            }
-            return;
-          }
-
-          if (decoded.flag === "user_exists") {
+          // Not logged in: route through the correct pre-auth step. Existing
+          // patients log in; new patients create a password first. Both
+          // converge on the funnel-picker modal after authentication + case
+          // sync (driven by the multiple-funnel pending record stored above).
+          // resolvePatientExists also catches a reused `no_user` link whose
+          // account now exists — routing it to login instead of Create
+          // Password. Identical handling for email and sms.
+          const patientExists = await resolvePatientExists(decoded);
+          if (patientExists) {
             setLocation("/login");
           } else {
             // New user: create a password first. ResetPassword reads
@@ -182,7 +201,7 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // ---- Single-funnel path (unchanged) ----
+        // ---- Single-funnel path ----
         // A valid form is required from here on. This guard also narrows
         // validFormId/formPath to non-null for the rest of the handler.
         if (!validFormId || !formPath) {
@@ -290,130 +309,45 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (isSmsSource) {
-          if (hasToken || isAuthenticated) {
-            try {
-              await navigateToFormWithCaseSync();
-            } catch (error) {
-              toast({
-                title: "Unable to Switch Case",
-                description: getApiErrorMessage(error),
-                variant: "destructive",
-              });
-              setLocation("/");
-            }
-            return;
-          }
-
-          if (!decoded.patient_id) {
-            setLocation("/");
-            return;
-          }
-
+        // ---- Single-funnel routing (email, sms, or unspecified source) ----
+        // Past the wrong-account guard above, pre-auth routing is identical for
+        // every source. A logged-in matching patient (the account exists) goes
+        // straight to the form; otherwise existing patients log in and new
+        // patients create a password.
+        if (hasToken || isAuthenticated) {
           try {
-            const verifyResponse = await Apis.verifyMagicLink(decoded.patient_id);
-            const verifyFlag = verifyResponse?.flag?.toLowerCase();
-
-            storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
-
-            if (verifyFlag === "exist") {
-              sessionStorage.setItem("ahcs_user_exists_form_redirect", JSON.stringify({ ...decoded, form: validFormId }));
-              setLocation("/login");
-            } else {
-              storeEmailLinkData({ ...decoded, form: validFormId });
-              setLocation("/reset-password");
-            }
+            await navigateToFormWithCaseSync();
           } catch (error) {
             toast({
-              title: "Verification Failed",
+              title: "Unable to Switch Case",
               description: getApiErrorMessage(error),
               variant: "destructive",
             });
             setLocation("/");
           }
-
           return;
         }
 
-        if (isEmailSource) {
-          if (hasToken || isAuthenticated) {
-            try {
-              await navigateToFormWithCaseSync();
-            } catch (error) {
-              toast({
-                title: "Unable to Switch Case",
-                description: getApiErrorMessage(error),
-                variant: "destructive",
-              });
-              setLocation("/");
-            }
-            return;
-          }
-
-          if (!decoded.patient_id) {
-            setLocation("/");
-            return;
-          }
-
-          storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
-
-          // Trust the flag baked into the email link by the backend. A live
-          // verifyMagicLink call was previously used here but its response can
-          // disagree with the encoded flag (different backend paths), causing
-          // user_exists links to wrongly land on /reset-password.
-          if (decoded.flag === "user_exists") {
-            sessionStorage.setItem("ahcs_user_exists_form_redirect", JSON.stringify({ ...decoded, form: validFormId }));
-            setLocation("/login");
-          } else {
-            storeEmailLinkData({ ...decoded, form: validFormId });
-            setLocation("/reset-password");
-          }
-
+        if (!decoded.patient_id) {
+          setLocation("/");
           return;
         }
 
-        if (decoded.flag === "user_exists") {
-          if (hasToken || isAuthenticated) {
-            try {
-              await navigateToFormWithCaseSync();
-            } catch (error) {
-              toast({
-                title: "Unable to Switch Case",
-                description: getApiErrorMessage(error),
-                variant: "destructive",
-              });
-              setLocation("/");
-            }
-          } else {
-            storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
-            sessionStorage.setItem("ahcs_user_exists_form_redirect", JSON.stringify({ ...decoded, form: validFormId }));
-            setLocation("/login");
-          }
+        storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
+
+        // Existing account → login (stash the form redirect so login lands on
+        // the form). New account → create a password. resolvePatientExists
+        // trusts a `user_exists` URL flag and otherwise confirms with a live
+        // magic-link verify, so a reused `no_user` link whose account now exists
+        // routes to login instead of the Create Password page. Same for email
+        // and sms.
+        const patientExists = await resolvePatientExists(decoded);
+        if (patientExists) {
+          sessionStorage.setItem("ahcs_user_exists_form_redirect", JSON.stringify({ ...decoded, form: validFormId }));
+          setLocation("/login");
         } else {
-          // no_user flag. If this patient is already logged in (the token's
-          // patient_id matches the link — the wrong-account guard above already
-          // bounced a different patient), the account now exists, e.g. the link
-          // is being reused after registration. Skip Create Password and go to
-          // the form like the user_exists flow.
-          const isAlreadyRegisteredPatient =
-            (hasToken || isAuthenticated) && patientIdMatchesToken(decoded.patient_id);
-
-          if (isAlreadyRegisteredPatient) {
-            try {
-              await navigateToFormWithCaseSync();
-            } catch (error) {
-              toast({
-                title: "Unable to Switch Case",
-                description: getApiErrorMessage(error),
-                variant: "destructive",
-              });
-              setLocation("/");
-            }
-          } else {
-            storePendingMagicLinkRedirect(validFormId, search, decodedCaseId || undefined, decoded.patient_id || undefined);
-            storeEmailLinkData({ ...decoded, form: validFormId });
-            setLocation("/reset-password");
-          }
+          storeEmailLinkData({ ...decoded, form: validFormId });
+          setLocation("/reset-password");
         }
       } finally {
         setIsHandlingMagicLink(false);
