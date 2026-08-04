@@ -7,6 +7,12 @@ import { getApiErrorMessage } from "@/lib/apiError";
 import { consumePendingMagicLinkRedirect, MAGIC_LINK_PENDING_REDIRECT_KEY, getFormPath, URL_CASE_ID_KEY } from "@/lib/magicLink";
 import { patientIdMatchesToken } from "@/lib/caseContext";
 import { isEncodedEmailLink } from "@/lib/decodeEmailLink";
+import {
+  readMultipleFunnelPendingRedirect,
+  clearMultipleFunnelPendingRedirect,
+  requestOpenMultipleFunnelsModal,
+  MULTIPLE_FUNNEL_PENDING_KEY,
+} from "@/lib/multipleFunnels";
 
 export type UserRole = "patient" | "staff" | "admin";
 
@@ -130,9 +136,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           localStorage.clear();
           const formRedirectFlag1 = sessionStorage.getItem("ahcs_user_exists_form_redirect");
           const pendingMagicLinkRedirect1 = sessionStorage.getItem(MAGIC_LINK_PENDING_REDIRECT_KEY);
+          const pendingMultipleFunnel1 = sessionStorage.getItem(MULTIPLE_FUNNEL_PENDING_KEY);
           sessionStorage.clear();
           if (formRedirectFlag1) sessionStorage.setItem("ahcs_user_exists_form_redirect", formRedirectFlag1);
           if (pendingMagicLinkRedirect1) sessionStorage.setItem(MAGIC_LINK_PENDING_REDIRECT_KEY, pendingMagicLinkRedirect1);
+          if (pendingMultipleFunnel1) sessionStorage.setItem(MULTIPLE_FUNNEL_PENDING_KEY, pendingMultipleFunnel1);
           // When the URL is an encoded magic link, let EmailLinkHandler decide the
           // destination (e.g. /reset-password for a new user). Redirecting to
           // /login here would clobber that routing for a stale/expired session.
@@ -151,9 +159,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.clear();
         const formRedirectFlag2 = sessionStorage.getItem("ahcs_user_exists_form_redirect");
         const pendingMagicLinkRedirect2 = sessionStorage.getItem(MAGIC_LINK_PENDING_REDIRECT_KEY);
+        const pendingMultipleFunnel2 = sessionStorage.getItem(MULTIPLE_FUNNEL_PENDING_KEY);
         sessionStorage.clear();
         if (formRedirectFlag2) sessionStorage.setItem("ahcs_user_exists_form_redirect", formRedirectFlag2);
         if (pendingMagicLinkRedirect2) sessionStorage.setItem(MAGIC_LINK_PENDING_REDIRECT_KEY, pendingMagicLinkRedirect2);
+        if (pendingMultipleFunnel2) sessionStorage.setItem(MULTIPLE_FUNNEL_PENDING_KEY, pendingMultipleFunnel2);
       } finally {
         setIsLoading(false);
       }
@@ -193,6 +203,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Store complete user data from token
           if (userData) {
             localStorage.setItem("ahcs_user_data", JSON.stringify(userData));
+          }
+
+          // Highest priority: a pending multiple-funnel continuation. Keep the
+          // record in place for the app-level modal, pre-sync the case so its
+          // first fetch is correctly scoped, and land on the dashboard. Clear
+          // the competing single-funnel redirect keys so only the modal drives
+          // navigation. Runs BEFORE the single-funnel redirect ladder below.
+          const multipleFunnelPending = readMultipleFunnelPendingRedirect();
+          if (multipleFunnelPending) {
+            if (!patientIdMatchesToken(multipleFunnelPending.patient_id)) {
+              clearMultipleFunnelPendingRedirect();
+              toast({
+                title: "Wrong Account",
+                description: "This link belongs to a different patient account. Please logout and then try the link again.",
+                variant: "destructive",
+              });
+              setLocation("/");
+              return;
+            }
+            sessionStorage.removeItem(MAGIC_LINK_PENDING_REDIRECT_KEY);
+            sessionStorage.removeItem("ahcs_user_exists_form_redirect");
+            sessionStorage.removeItem("ahcs_sms_no_user_form_redirect");
+            sessionStorage.removeItem("ahcs_password_reset_flow");
+            sessionStorage.removeItem(URL_CASE_ID_KEY);
+            if (multipleFunnelPending.case_id) {
+              localStorage.setItem("ahcs_selected_case_id", multipleFunnelPending.case_id);
+              refreshUserDetails().catch(() => {});
+            }
+            requestOpenMultipleFunnelsModal();
+            setLocation("/");
+            return;
           }
 
           // Consume the URL case_id written by EmailLinkHandler before any
@@ -291,6 +332,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             role: "patient",
           };
           setUser(fallbackUser);
+
+          // Highest priority: pending multiple-funnel continuation (mirrors the
+          // primary branch above). Keep the record for the modal, pre-sync case,
+          // clear competing single-funnel keys, land on the dashboard.
+          const fallbackMultipleFunnelPending = readMultipleFunnelPendingRedirect();
+          if (fallbackMultipleFunnelPending) {
+            if (!patientIdMatchesToken(fallbackMultipleFunnelPending.patient_id)) {
+              clearMultipleFunnelPendingRedirect();
+              toast({
+                title: "Wrong Account",
+                description: "This link belongs to a different patient account. Please logout and then try the link again.",
+                variant: "destructive",
+              });
+              setLocation("/");
+              return;
+            }
+            sessionStorage.removeItem(MAGIC_LINK_PENDING_REDIRECT_KEY);
+            sessionStorage.removeItem("ahcs_user_exists_form_redirect");
+            sessionStorage.removeItem("ahcs_sms_no_user_form_redirect");
+            sessionStorage.removeItem("ahcs_password_reset_flow");
+            sessionStorage.removeItem(URL_CASE_ID_KEY);
+            if (fallbackMultipleFunnelPending.case_id) {
+              localStorage.setItem("ahcs_selected_case_id", fallbackMultipleFunnelPending.case_id);
+              refreshUserDetails().catch(() => {});
+            }
+            requestOpenMultipleFunnelsModal();
+            setLocation("/");
+            return;
+          }
+
           // Same URL case_id fallback as the primary branch above.
           const fallbackUrlCaseId = sessionStorage.getItem(URL_CASE_ID_KEY) || "";
           sessionStorage.removeItem(URL_CASE_ID_KEY);

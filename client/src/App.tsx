@@ -27,6 +27,7 @@ import NotFound from "@/pages/not-found";
 import ResetPassword from "@/pages/ResetPassword";
 import { TokenValidator } from "@/components/TokenValidator";
 import { EmailLinkHandler } from "@/components/EmailLinkHandler";
+import MultipleFunnelSelectionModal from "@/components/MultipleFunnelSelectionModal";
 
 function ProtectedRoute({ component: Component, allowedRoles }: { component: React.ComponentType, allowedRoles: string[] }) {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -176,6 +177,9 @@ function AppContent() {
     <EmailLinkHandler>
       <TokenValidator>
         <Router />
+        {/* App-level host: opens over any route once a multiple-funnel magic
+            link continuation is pending and the patient is authenticated. */}
+        <MultipleFunnelSelectionModal />
         <Toaster />
         <SonnerToaster
           position="top-right"

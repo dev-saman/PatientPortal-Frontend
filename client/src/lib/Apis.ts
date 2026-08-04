@@ -83,6 +83,24 @@ export default class Apis {
   };
 
   /**
+   * Fetch every funnel assigned to a patient+case, for the multiple-funnel
+   * selection modal. patient_id and case_id are passed EXPLICITLY as query params
+   * (matching the backend contract), so this endpoint is exempt from the axios
+   * interceptor's automatic case_id injection to avoid a duplicate case_id param
+   * (see CASE_ID_EXEMPT_ENDPOINTS in api.ts).
+   * NOTE: request method/path and response shape are pending backend confirmation.
+   * @param patientId - Patient id from the decoded magic link
+   * @param caseId - Case id from the decoded magic link (already synced as active)
+   * @returns Assigned funnels response (normalized via normalizeAssignedFunnels)
+   */
+  static checkMultipleAssignFunnel = (patientId: string | number, caseId: string | number) => {
+    return Network(
+      "POST",
+      `check-multiple-assign-funnel?patient_id=${encodeURIComponent(patientId)}&case_id=${encodeURIComponent(caseId)}`,
+    );
+  };
+
+  /**
    * Submit patient form data
    * @param formId - The form ID to submit
    * @param data - FormData with funnel_id and fields[fieldId] values

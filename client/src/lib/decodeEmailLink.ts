@@ -26,7 +26,11 @@ export interface DecodedEmailLinkData {
   name: string;
   email: string;
   phone: string;
-  [key: string]: string; // Allow additional decoded fields
+  // Optional flag introduced for multiple-funnel magic links. When present and
+  // truthy (see isMultipleFunnelsEnabled), the patient is shown a funnel-picker
+  // modal instead of being routed to the single `form`.
+  is_multiple_funnels?: string;
+  [key: string]: string | undefined; // Allow additional decoded fields
 }
 
 /**
@@ -66,7 +70,7 @@ export function isEncodedEmailLink(search: string): boolean {
   const decodedKey = safeAtob(firstPair[0]);
   if (!decodedKey) return false;
 
-  const knownKeys = ["form", "flag", "patient_id", "case_id", "funnel_name", "name", "email", "phone"];
+  const knownKeys = ["form", "flag", "patient_id", "case_id", "funnel_name", "name", "email", "phone", "is_multiple_funnels"];
   return knownKeys.includes(decodedKey);
 }
 

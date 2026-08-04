@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from "axios";
 import { MAGIC_LINK_PENDING_REDIRECT_KEY } from "./magicLink";
+import { MULTIPLE_FUNNEL_PENDING_KEY } from "./multipleFunnels";
 
 /**
  * Resolve the currently active case id.
@@ -45,6 +46,9 @@ const CASE_ID_EXEMPT_ENDPOINTS = [
   "appointment-schedule",
   // case_id is passed explicitly as a path segment (and in the body)
   "appointment-cancel",
+  // patient_id and case_id are passed explicitly as query params for the
+  // multiple-funnel picker; skip auto case_id injection to avoid a duplicate.
+  "check-multiple-assign-funnel",
 ];
 
 export const getActiveCaseId = (): string => {
@@ -126,9 +130,11 @@ axiosInstance.interceptors.response.use(
         localStorage.clear();
         const formRedirect = sessionStorage.getItem("ahcs_user_exists_form_redirect");
         const pendingMagicLinkRedirect = sessionStorage.getItem(MAGIC_LINK_PENDING_REDIRECT_KEY);
+        const pendingMultipleFunnelRedirect = sessionStorage.getItem(MULTIPLE_FUNNEL_PENDING_KEY);
         sessionStorage.clear();
         if (formRedirect) sessionStorage.setItem("ahcs_user_exists_form_redirect", formRedirect);
         if (pendingMagicLinkRedirect) sessionStorage.setItem(MAGIC_LINK_PENDING_REDIRECT_KEY, pendingMagicLinkRedirect);
+        if (pendingMultipleFunnelRedirect) sessionStorage.setItem(MULTIPLE_FUNNEL_PENDING_KEY, pendingMultipleFunnelRedirect);
 
         // Only redirect if not already on login page
         // This prevents page reload when login fails with invalid credentials

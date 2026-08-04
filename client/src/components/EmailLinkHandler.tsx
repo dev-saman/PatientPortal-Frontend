@@ -17,6 +17,7 @@ import {
   URL_CASE_ID_KEY,
 } from "@/lib/magicLink";
 import { patientIdMatchesToken, applyCaseContext, getActiveCaseId } from "@/lib/caseContext";
+import { isMultipleFunnelsEnabled, storeMultipleFunnelPendingRedirect } from "@/lib/multipleFunnels";
 
 /**
  * EmailLinkHandler
@@ -58,10 +59,13 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
 
         const validFormId = getValidFormId(decoded.form);
         const formPath = getFormPath(decoded.form);
-        if (!validFormId || !formPath) {
-          setLocation("/");
-          return;
-        }
+
+        // Multiple-funnel mode swaps the single-form target for a picker modal.
+        // It only needs patient_id + case_id (not a valid `form`), so these links
+        // are handled below BEFORE the single-funnel form guard.
+        const isMultiFunnel = isMultipleFunnelsEnabled(decoded.is_multiple_funnels);
+        const hasMultiFunnelIds = !!decoded.patient_id && !!String(decoded.case_id || "").trim();
+        const canMultiFunnel = isMultiFunnel && hasMultiFunnelIds;
 
         const hasToken = !!localStorage.getItem("ahcs_token");
         const isSmsSource = decoded.source?.toLowerCase() === "sms";
@@ -74,6 +78,88 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
         // Written before any async call so nothing clears it first.
         if (decodedCaseId) {
           sessionStorage.setItem(URL_CASE_ID_KEY, decodedCaseId);
+        }
+
+        // ---- Multiple-funnel magic links ----
+        // Handled here, before the single-funnel form guard, because they do not
+        // require a valid `form`. We stash a pending record and let the app-level
+        // selection modal take over after authentication + case sync. When
+        // patient_id or case_id is missing (canMultiFunnel === false) we fall
+        // through to the existing single-funnel behavior below, unchanged.
+        if (canMultiFunnel) {
+          const alreadyLoggedIn = hasToken || isAuthenticated;
+
+          // Wrong-account guard — same rule as the single-funnel guard below.
+          if (alreadyLoggedIn && !patientIdMatchesToken(decoded.patient_id)) {
+            sessionStorage.removeItem(URL_CASE_ID_KEY);
+            toast({
+              title: "Wrong Account",
+              description: "This link belongs to a different patient account. Please logout and then try the link again.",
+              variant: "destructive",
+            });
+            setLocation("/");
+            return;
+          }
+
+          // Persist the continuation. Survives the login / create-password
+          // navigations and is consumed only on successful funnel selection.
+          storeMultipleFunnelPendingRedirect({
+            patient_id: decoded.patient_id,
+            case_id: decodedCaseId,
+            form: validFormId || decoded.form || "",
+            funnel_name: decoded.funnel_name || "",
+            source: decoded.source || "",
+            flag: decoded.flag || "",
+          });
+
+          if (alreadyLoggedIn) {
+            // Patient already validated above. The app-level modal picks up the
+            // record and syncs the case.
+            setLocation("/");
+            return;
+          }
+
+          // Not logged in: route through the correct pre-auth step. For SMS we
+          // still verify to choose create-password vs login; both converge on
+          // the modal after authentication.
+          if (isSmsSource) {
+            try {
+              const verifyResponse = await Apis.verifyMagicLink(decoded.patient_id);
+              const verifyFlag = verifyResponse?.flag?.toLowerCase();
+              if (verifyFlag === "exist") {
+                setLocation("/login");
+              } else {
+                storeEmailLinkData({ ...decoded, form: validFormId || decoded.form || "0" });
+                setLocation("/reset-password");
+              }
+            } catch (error) {
+              toast({
+                title: "Verification Failed",
+                description: getApiErrorMessage(error),
+                variant: "destructive",
+              });
+              setLocation("/");
+            }
+            return;
+          }
+
+          if (decoded.flag === "user_exists") {
+            setLocation("/login");
+          } else {
+            // New user: create a password first. ResetPassword reads
+            // ahcs_email_link_data and posts /add-patient-to-funnel as today.
+            storeEmailLinkData({ ...decoded, form: validFormId || decoded.form || "0" });
+            setLocation("/reset-password");
+          }
+          return;
+        }
+
+        // ---- Single-funnel path (unchanged) ----
+        // A valid form is required from here on. This guard also narrows
+        // validFormId/formPath to non-null for the rest of the handler.
+        if (!validFormId || !formPath) {
+          setLocation("/");
+          return;
         }
 
         /**

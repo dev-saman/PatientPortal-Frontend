@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { jwtDecode } from "jwt-decode";
 import { MAGIC_LINK_PENDING_REDIRECT_KEY } from "@/lib/magicLink";
+import { MULTIPLE_FUNNEL_PENDING_KEY } from "@/lib/multipleFunnels";
 
 interface TokenValidatorProps {
   children: React.ReactNode;
@@ -57,9 +58,11 @@ export function TokenValidator({ children }: TokenValidatorProps) {
         localStorage.clear();
         const formRedirectFlag = sessionStorage.getItem("ahcs_user_exists_form_redirect");
         const pendingMagicLinkRedirect = sessionStorage.getItem(MAGIC_LINK_PENDING_REDIRECT_KEY);
+        const pendingMultipleFunnelRedirect = sessionStorage.getItem(MULTIPLE_FUNNEL_PENDING_KEY);
         sessionStorage.clear();
         if (formRedirectFlag) sessionStorage.setItem("ahcs_user_exists_form_redirect", formRedirectFlag);
         if (pendingMagicLinkRedirect) sessionStorage.setItem(MAGIC_LINK_PENDING_REDIRECT_KEY, pendingMagicLinkRedirect);
+        if (pendingMultipleFunnelRedirect) sessionStorage.setItem(MULTIPLE_FUNNEL_PENDING_KEY, pendingMultipleFunnelRedirect);
         if (location === "/" || location === "/login") {
           setLocation("/login");
         } else {
