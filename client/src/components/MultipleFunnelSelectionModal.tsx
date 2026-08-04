@@ -18,6 +18,7 @@ import {
   MULTIPLE_FUNNELS_EVENT,
   MULTIPLE_FUNNELS_OPEN_EVENT,
   clearMultipleFunnelPendingRedirect,
+  consumeMultipleFunnelPendingRedirect,
   multipleFunnelRecordSignature,
   normalizeAssignedFunnels,
   readMultipleFunnelPendingRedirect,
@@ -89,6 +90,11 @@ export default function MultipleFunnelSelectionModal() {
 
     fetchingRef.current = true;
     setPendingRecord(record);
+    // Consume the pending record the moment the modal takes ownership of it. Its
+    // data now lives in component state (for selection/retry this session), so a
+    // page refresh, navigation, or case change will NOT reshow the modal — it is
+    // a one-shot for the magic-link arrival.
+    consumeMultipleFunnelPendingRedirect();
     setFunnels([]);
     setError(false);
     setLoading(true);
@@ -121,13 +127,11 @@ export default function MultipleFunnelSelectionModal() {
     if (!isAuthedRef.current) return;
 
     const record = readMultipleFunnelPendingRedirect();
-    if (!record) {
-      // Cleared (selected/dismissed): close and reset so a future link works.
-      processedSigRef.current = null;
-      setOpen(false);
-      setPendingRecord(null);
-      return;
-    }
+    // No pending record → nothing to open. Do NOT force-close here: the modal is
+    // consumed on show, so its open state is owned by the user's actions
+    // (select / close), not by the record's presence. Closing on absence would
+    // shut the modal the instant it consumes its own record.
+    if (!record) return;
 
     const signature = multipleFunnelRecordSignature(record);
     if (signature === processedSigRef.current) return; // already handled

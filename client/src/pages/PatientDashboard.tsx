@@ -27,11 +27,6 @@ import PatientFunnelAccordion from "@/components/PatientFunnelAccordion";
 import { fetchCaseFunnelsWithForms, sumPendingForms, PatientAssignedFunnel } from "@/lib/patientFunnels";
 import Apis from "@/lib/Apis";
 import { getApiErrorMessage } from "@/lib/apiError";
-import {
-  readMultipleFunnelPendingRedirect,
-  requestOpenMultipleFunnelsModal,
-  MULTIPLE_FUNNELS_EVENT,
-} from "@/lib/multipleFunnels";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { formatWeekdayMonthDay, formatMonthDay, getAppointmentTimestamp } from "@/lib/utils";
@@ -103,17 +98,6 @@ export default function PatientDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [funnelFormViewLoadingId, setFunnelFormViewLoadingId] = useState<string | number | null>(null);
   const [funnelFormDownloadLoadingId, setFunnelFormDownloadLoadingId] = useState<string | number | null>(null);
-
-  // Entry point back into the multiple-funnel picker, shown only while a
-  // magic-link funnel selection is still pending (record present in session).
-  const [hasPendingFunnelSelection, setHasPendingFunnelSelection] = useState<boolean>(
-    () => !!readMultipleFunnelPendingRedirect()
-  );
-  useEffect(() => {
-    const update = () => setHasPendingFunnelSelection(!!readMultipleFunnelPendingRedirect());
-    window.addEventListener(MULTIPLE_FUNNELS_EVENT, update);
-    return () => window.removeEventListener(MULTIPLE_FUNNELS_EVENT, update);
-  }, []);
 
   useEffect(() => {
     if (!selectedCaseId) return;
@@ -376,26 +360,6 @@ export default function PatientDashboard() {
         */}
       </div>
 
-      {/* Pending multiple-funnel selection entry point (magic-link continuation) */}
-      {hasPendingFunnelSelection && (
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-xl border border-red-100 bg-red-50/60 p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-red-100 text-red-700">
-              <FileText className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="font-semibold text-gray-900">You have assigned forms to complete</p>
-              <p className="text-sm text-gray-500">Choose which form you'd like to open.</p>
-            </div>
-          </div>
-          <Button
-            className="bg-red-700 hover:bg-red-800 text-white shrink-0"
-            onClick={() => requestOpenMultipleFunnelsModal()}
-          >
-            View assigned forms
-          </Button>
-        </div>
-      )}
 
       {/* Quick Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

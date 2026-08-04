@@ -220,6 +220,17 @@ export function clearMultipleFunnelPendingRedirect(): void {
   dispatchDomEvent(MULTIPLE_FUNNELS_EVENT);
 }
 
+/**
+ * Remove the pending record WITHOUT notifying listeners. Called when the modal
+ * takes ownership of the record (i.e. shows it): the record's data then lives in
+ * the modal's own state for the current session, and a page refresh or
+ * navigation will NOT find the record and reshow the modal. Kept event-free so it
+ * does not re-trigger the modal's own change listener mid-open.
+ */
+export function consumeMultipleFunnelPendingRedirect(): void {
+  sessionStorage.removeItem(MULTIPLE_FUNNEL_PENDING_KEY);
+}
+
 /** Ask the host modal to (re)open for the current pending record. */
 export function requestOpenMultipleFunnelsModal(): void {
   dispatchDomEvent(MULTIPLE_FUNNELS_OPEN_EVENT);
