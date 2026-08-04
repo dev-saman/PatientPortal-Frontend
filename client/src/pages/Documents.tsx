@@ -23,7 +23,7 @@ import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import Apis from "@/lib/Apis";
-import PatientFunnelCard from "@/components/PatientFunnelCard";
+import PatientFunnelAccordion from "@/components/PatientFunnelAccordion";
 import {
   fetchCaseFunnelsWithForms,
   sumPendingForms,
@@ -1554,21 +1554,16 @@ export default function Documents() {
                     {overallPending === 0 ? "All Complete" : `${overallPending} Pending`}
                   </Badge>
                 </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-                  {funnels.map((funnel) => (
-                    <PatientFunnelCard
-                      key={String(funnel.funnelId)}
-                      variant="documents"
-                      funnel={funnel}
-                      isStarting={editingFunnelId === funnel.funnelId}
-                      onStart={handleStartFunnelCard}
-                      onViewForm={handleViewFunnelForm}
-                      onDownloadForm={handleDownloadFunnelFormPDF}
-                      viewLoadingId={funnelFormViewLoadingId}
-                      downloadLoadingId={funnelFormDownloadLoadingId}
-                    />
-                  ))}
-                </div>
+                <PatientFunnelAccordion
+                  variant="documents"
+                  funnels={funnels}
+                  startingFunnelId={editingFunnelId}
+                  onStart={handleStartFunnelCard}
+                  onViewForm={handleViewFunnelForm}
+                  onDownloadForm={handleDownloadFunnelFormPDF}
+                  viewLoadingId={funnelFormViewLoadingId}
+                  downloadLoadingId={funnelFormDownloadLoadingId}
+                />
               </div>
             );
           }

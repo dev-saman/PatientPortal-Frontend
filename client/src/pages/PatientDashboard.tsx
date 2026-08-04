@@ -23,7 +23,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSelectedCase } from "@/contexts/SelectedCaseContext";
 import RecentActivity from "@/components/RecentActivity";
 import FormViewModal from "@/components/FormViewModal";
-import PatientFunnelCard from "@/components/PatientFunnelCard";
+import PatientFunnelAccordion from "@/components/PatientFunnelAccordion";
 import { fetchCaseFunnelsWithForms, sumPendingForms, PatientAssignedFunnel } from "@/lib/patientFunnels";
 import Apis from "@/lib/Apis";
 import { getApiErrorMessage } from "@/lib/apiError";
@@ -589,21 +589,16 @@ export default function PatientDashboard() {
           {isMultiFunnel && !funnelsErrorMsg && (
             <div>
               <h2 className="text-lg font-bold text-gray-900 mb-4">Your Assigned Forms</h2>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-                {funnels.map((funnel) => (
-                  <PatientFunnelCard
-                    key={String(funnel.funnelId)}
-                    variant="dashboard"
-                    funnel={funnel}
-                    isStarting={dashboardStartingFunnelId === funnel.funnelId}
-                    onStart={handleStartFunnel}
-                    onViewForm={handleViewFunnelForm}
-                    onDownloadForm={handleDownloadFunnelFormPDF}
-                    viewLoadingId={funnelFormViewLoadingId}
-                    downloadLoadingId={funnelFormDownloadLoadingId}
-                  />
-                ))}
-              </div>
+              <PatientFunnelAccordion
+                variant="dashboard"
+                funnels={funnels}
+                startingFunnelId={dashboardStartingFunnelId}
+                onStart={handleStartFunnel}
+                onViewForm={handleViewFunnelForm}
+                onDownloadForm={handleDownloadFunnelFormPDF}
+                viewLoadingId={funnelFormViewLoadingId}
+                downloadLoadingId={funnelFormDownloadLoadingId}
+              />
             </div>
           )}
 
