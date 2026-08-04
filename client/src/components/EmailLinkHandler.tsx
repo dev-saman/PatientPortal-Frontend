@@ -31,6 +31,14 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, refreshUserDetails } = useAuth();
   const { toast } = useToast();
   const [isHandlingMagicLink, setIsHandlingMagicLink] = useState(false);
+  // Set true once a magic link has been fully processed. This is a real state
+  // change (false -> true) that GUARANTEES a re-render, so the loader clears even
+  // when the handler navigates to the SAME pathname it is already on (e.g. an
+  // already-logged-in link that routes back to "/"). Without it the component
+  // never re-renders in that case: wouter's useSyncExternalStore snapshot for the
+  // pathname is unchanged, and setIsHandlingMagicLink(true)->(false) batches to a
+  // net no-op — leaving the app frozen on the spinner.
+  const [linkResolved, setLinkResolved] = useState(false);
   // Process a given magic-link URL exactly once. Without this guard the effect
   // re-runs when auth state settles (isAuthenticated flips during session
   // restore) while the async case switch is still in flight, firing a second
@@ -409,6 +417,9 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
         }
       } finally {
         setIsHandlingMagicLink(false);
+        // Force a re-render so the loader clears even when the destination
+        // pathname equals the current one (see linkResolved declaration).
+        setLinkResolved(true);
       }
     };
 
@@ -421,7 +432,8 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
   // unauthenticated visitor to /login before this handler can route the link
   // (e.g. to /reset-password for a new user). The navigation below clears the
   // query string, which drops this guard and renders children normally.
-  const hasPendingMagicLink = !isLoading && isEncodedEmailLink(window.location.search);
+  const hasPendingMagicLink =
+    !isLoading && !linkResolved && isEncodedEmailLink(window.location.search);
 
   if (isHandlingMagicLink || hasPendingMagicLink) {
     return <LoadingSpinner />;
