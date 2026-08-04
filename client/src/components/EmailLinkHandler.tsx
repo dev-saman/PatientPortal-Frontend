@@ -113,8 +113,17 @@ export function EmailLinkHandler({ children }: { children: React.ReactNode }) {
           });
 
           if (alreadyLoggedIn) {
-            // Patient already validated above. The app-level modal picks up the
-            // record and syncs the case.
+            // Pre-sync the link's case BEFORE navigating (mirrors
+            // AuthContext.login for the not-logged-in path). This is written
+            // directly to localStorage — without dispatching a case-change
+            // event — so the app-level modal finds the case already active and
+            // does NOT perform a mid-mount case switch. Doing that switch inside
+            // the modal remounts the page content while it is still
+            // initializing, which left the app stuck on the loader.
+            if (decodedCaseId && getActiveCaseId() !== decodedCaseId) {
+              localStorage.setItem("ahcs_selected_case_id", decodedCaseId);
+              refreshUserDetails().catch(() => {});
+            }
             setLocation("/");
             return;
           }

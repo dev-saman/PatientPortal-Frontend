@@ -95,15 +95,14 @@ export default function MultipleFunnelSelectionModal() {
     setOpen(true);
 
     try {
-      // Await the case switch so the fetch below is scoped to the link's case
-      // (the axios interceptor reads the active case from localStorage).
+      // Fallback case sync. The magic-link entry points (EmailLinkHandler and
+      // AuthContext.login) already pre-select the link's case before this modal
+      // mounts, so this rarely runs. When it does, the refresh is fire-and-forget
+      // so the funnel fetch below — which passes case_id explicitly and is exempt
+      // from the interceptor — is never blocked on getPatientDetails.
       if (record.case_id && getActiveCaseId() !== record.case_id) {
         applyCaseContext(record.case_id);
-        try {
-          await refreshRef.current();
-        } catch {
-          // Non-blocking — funnels can still load for the switched case.
-        }
+        refreshRef.current().catch(() => {});
       }
 
       const response = await Apis.checkMultipleAssignFunnel(record.patient_id, record.case_id);
