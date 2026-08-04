@@ -34,8 +34,8 @@ export interface PatientFunnelAccordionProps {
   funnels: PatientAssignedFunnel[];
   onStart: (funnel: PatientAssignedFunnel) => void;
   startingFunnelId: string | number | null;
-  onViewForm: (form: PatientFunnelFormSummary) => void;
-  onDownloadForm: (form: PatientFunnelFormSummary) => void;
+  onViewForm: (form: PatientFunnelFormSummary, rowKey: string) => void;
+  onDownloadForm: (form: PatientFunnelFormSummary, rowKey: string) => void;
   viewLoadingId: string | number | null;
   downloadLoadingId: string | number | null;
 }
@@ -43,9 +43,16 @@ export interface PatientFunnelAccordionProps {
 const getFormName = (form: PatientFunnelFormSummary): string =>
   form?.form_title || form?.form_name || form?.title || form?.name || "Untitled Form";
 
-// Same key the pages use for per-row loading state (id → form_id → name).
+// Per-form key (id → form_id → name).
 const getFormKey = (form: PatientFunnelFormSummary): string | number =>
   form?.id ?? form?.form_id ?? getFormName(form);
+
+// Funnel-scoped loading key. Two funnels can contain forms with identical ids
+// or names, so the loading spinner must be keyed by funnel AND form — otherwise
+// clicking a form's eye/download in one funnel spins the same-named form in every
+// other funnel too.
+const getRowLoadingKey = (funnel: PatientAssignedFunnel, form: PatientFunnelFormSummary): string =>
+  `${String(funnel.funnelId)}::${String(getFormKey(form))}`;
 
 const getFormRowKey = (form: PatientFunnelFormSummary, index: number): string | number =>
   form?.id ?? form?.form_id ?? index;
@@ -62,15 +69,15 @@ export default function PatientFunnelAccordion({
 }: PatientFunnelAccordionProps) {
   const isDashboard = variant === "dashboard";
 
-  const completedActions = (form: PatientFunnelFormSummary) => {
-    const key = getFormKey(form);
+  const completedActions = (funnel: PatientAssignedFunnel, form: PatientFunnelFormSummary) => {
+    const key = getRowLoadingKey(funnel, form);
     return (
       <div className="flex items-center gap-1 shrink-0">
         <Button
           variant="ghost"
           size="icon"
           disabled={viewLoadingId === key}
-          onClick={() => onViewForm(form)}
+          onClick={() => onViewForm(form, key)}
           aria-label={`Preview ${getFormName(form)}`}
         >
           {viewLoadingId === key ? (
@@ -83,7 +90,7 @@ export default function PatientFunnelAccordion({
           variant="ghost"
           size="icon"
           disabled={downloadLoadingId === key}
-          onClick={() => onDownloadForm(form)}
+          onClick={() => onDownloadForm(form, key)}
           aria-label={`Download ${getFormName(form)}`}
         >
           {downloadLoadingId === key ? (
@@ -133,7 +140,7 @@ export default function PatientFunnelAccordion({
               {getFormName(form)}
             </h4>
           </div>
-          {completed && completedActions(form)}
+          {completed && completedActions(funnel, form)}
         </div>
       );
     });

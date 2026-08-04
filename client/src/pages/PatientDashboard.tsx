@@ -230,9 +230,12 @@ export default function PatientDashboard() {
     return new Blob([responseBlob], { type: "application/pdf" });
   };
 
-  const handleViewFunnelForm = async (form: any) => {
+  // `loadingKey` is a funnel-scoped key supplied by the multi-funnel accordion so
+  // identical forms in different funnels don't share a loading spinner. The
+  // single-funnel caller omits it and falls back to the plain form key.
+  const handleViewFunnelForm = async (form: any, loadingKey?: string | number) => {
     const formName = getFormName(form);
-    const formKey = form?.id ?? form?.form_id ?? formName;
+    const formKey = loadingKey ?? form?.id ?? form?.form_id ?? formName;
     setFunnelFormViewLoadingId(formKey);
     try {
       const response = await Apis.getPatientFormData();
@@ -253,9 +256,9 @@ export default function PatientDashboard() {
     }
   };
 
-  const handleDownloadFunnelFormPDF = async (form: any) => {
+  const handleDownloadFunnelFormPDF = async (form: any, loadingKey?: string | number) => {
     const formName = getFormName(form);
-    const formKey = form?.id ?? form?.form_id ?? formName;
+    const formKey = loadingKey ?? form?.id ?? form?.form_id ?? formName;
     setFunnelFormDownloadLoadingId(formKey);
     try {
       const response = await Apis.getPatientFormData();
