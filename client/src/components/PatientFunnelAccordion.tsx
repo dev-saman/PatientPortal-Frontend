@@ -1,11 +1,11 @@
-import { CheckCircle2, PenTool, Eye, Download, Loader2, FileText } from "lucide-react";
+import { CheckCircle2, PenTool, Eye, Download, Loader2, FileText, ChevronDown } from "lucide-react";
+import * as AccordionPrimitive from "@radix-ui/react-accordion";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import {
   Accordion,
   AccordionItem,
-  AccordionTrigger,
   AccordionContent,
 } from "@/components/ui/accordion";
 import {
@@ -161,12 +161,14 @@ export default function PatientFunnelAccordion({
           <AccordionItem
             key={String(funnel.funnelId)}
             value={String(funnel.funnelId)}
-            className={`border border-border border-l-4 ${accentClass} rounded-xl bg-card shadow-soft overflow-hidden data-[state=open]:shadow-md transition-shadow`}
+            className={`group border border-border border-l-4 ${accentClass} rounded-xl bg-card shadow-soft overflow-hidden data-[state=open]:shadow-md transition-shadow`}
           >
-            {/* Header row: trigger (name + progress) and CTA are siblings so the
-                CTA button is never nested inside the trigger button. */}
-            <div className="flex items-center gap-3 sm:gap-4 pl-4 pr-3 sm:pr-4">
-              <AccordionTrigger className="flex-1 min-w-0 py-3.5 items-center hover:no-underline [&>svg]:ml-2 [&>svg]:shrink-0">
+            {/* Header row: name/progress trigger, then the CTA, then the chevron
+                LAST on the far right. The CTA is a sibling (never nested in a
+                trigger); the chevron is its own trigger so both the left region
+                and the chevron toggle the panel. */}
+            <AccordionPrimitive.Header className="flex items-center gap-3 sm:gap-4 pl-4 pr-3 sm:pr-4">
+              <AccordionPrimitive.Trigger className="flex flex-1 min-w-0 items-center py-3.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md">
                 <div className="flex flex-col gap-2 flex-1 min-w-0">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileText className={`h-4 w-4 shrink-0 ${isComplete ? "text-green-600" : isDashboard ? "text-red-700" : "text-primary"}`} />
@@ -195,7 +197,7 @@ export default function PatientFunnelAccordion({
                     </div>
                   )}
                 </div>
-              </AccordionTrigger>
+              </AccordionPrimitive.Trigger>
               <Button
                 size="sm"
                 className={`shrink-0 min-w-[7rem] whitespace-nowrap ${isDashboard ? "bg-red-700 hover:bg-red-800 text-white" : "bg-primary hover:bg-primary/90"}`}
@@ -205,7 +207,13 @@ export default function PatientFunnelAccordion({
                 {isStarting ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
                 {ctaLabel}
               </Button>
-            </div>
+              <AccordionPrimitive.Trigger
+                aria-label="Toggle forms"
+                className="shrink-0 flex items-center justify-center p-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ChevronDown className="h-5 w-5 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+              </AccordionPrimitive.Trigger>
+            </AccordionPrimitive.Header>
             <AccordionContent className="px-4 pb-4">
               <div className="space-y-3 max-h-[360px] overflow-y-auto scroll-smooth pr-1 upcoming-visit-forms-scrollbar">
                 {renderFormsList(funnel)}
