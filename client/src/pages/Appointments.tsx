@@ -1109,14 +1109,14 @@ export default function Appointments() {
           <h1 className="text-2xl font-bold tracking-tight">Appointments</h1>
           <p className="text-muted-foreground">Manage your upcoming visits and view past history.</p>
         </div>
-        <Button
+        {/* <Button
           className="bg-primary hover:bg-primary/90"
           disabled={preauthsLoading}
           onClick={handleScheduleClick}
         >
           {preauthsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           Schedule Appointment
-        </Button>
+        </Button> */}
         <ScheduleAppointmentModal
           open={scheduleModalOpen}
           onClose={() => {
