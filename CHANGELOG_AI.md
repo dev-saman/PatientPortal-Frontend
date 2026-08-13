@@ -18,6 +18,85 @@ and notable configuration/docs changes.
 
 ---
 
+## 2026-08-13
+
+### Restrict the information shown on the preauthorization card
+> **What:** Reduced what the "Select Preauthorization" modal exposes on each preauth card.
+> **Removed:** the `Service` value (and the combined "Service / Visit type" label), the
+> `Referring physician` row, and the `Company` row. **Kept:** facility name, the used/total
+> sessions badge, the status pill, the visit type, and the authorized date range. Applies to
+> every card state — the status labels themselves are unchanged ("Ready to schedule" /
+> "Under Review" / "Activation required").
+>
+> The remaining row is now labelled **`Visit Type:`** and reads `p.visit_type` (the field
+> the scheduling modal already treats as the canonical visit-type code) rather than the
+> previous `p.service / p.pa_req` pair. A new `visitTypeLabel()` helper formats it as
+> **`Physical Therapy (PT)`** — display name followed by the code — degrading to the bare
+> code while `visit_type_name` is absent from the API, so the full format appears
+> automatically once the backend returns it. Filed as **BR-14**. No code→name mapping was
+> added to the frontend.
+>
+> **Files/areas:** `client/src/components/SelectPreauthorizationModal.tsx` (card body grid;
+> typed `visit_type_name` on `PreauthRecord`); `SCHEDULE_FLOW_BACKEND_REQUIREMENTS.md`
+> (BR-14 + triage row).
+>
+> **Auth / case-scoping / patient-data:** Strictly reductive — three fields
+> (referring physician, company, service) are no longer rendered in the portal. No API,
+> auth, or case-scoping behavior changed; no new requests. `tsc --noEmit` passes clean.
+
+---
+
+### Gate booking/rescheduling on the backend's `allow_visit_type` flag
+> **What:** Some visit types can't be self-booked and must be arranged by phone.
+> `GET get-approved-preauth` now returns two new per-record fields — `allow_visit_type`
+> (`1` = patient may book, `0` = must call) and `facility_phone_no` (pre-formatted by
+> the backend, e.g. `"(214) 941-4550"`) — neither of which the frontend read. Both are
+> now typed on `PreauthRecord` and consumed.
+>
+> When the flag is `0`, the **Schedule Your Remaining Appointments** modal replaces the
+> "Choose a day" strip and the time-slot grid with a new **Please Call to Schedule**
+> panel showing `{location}: {facility_phone_no}` (e.g. "Dallas: (214) 941-4550"),
+> swaps the "Your appointments" sidebar for a
+> "Scheduling assistance" card, hides the subtitle/session banner, and hides the
+> **Schedule** button. `loadBlock()` early-returns so **no** `get-time-slots-date-range`
+> request is made at all (also relieves the known 429 pressure on that endpoint).
+>
+> The **Reschedule** modal has the same gate wired (call panel replaces the date picker,
+> Available Times and reason select; `Re-Schedule` button hidden; both availability
+> fetches skipped). It is **dormant** until the backend adds the two fields to
+> `get-appointment/{id}` — see BR-13 in `SCHEDULE_FLOW_BACKEND_REQUIREMENTS.md`. Until
+> then the reschedule flow behaves exactly as before.
+>
+> Readiness rule: **only an explicit `0` blocks.** The API currently returns
+> `allow_visit_type: null` on some records (e.g. `ma_id 186341`); `null`/`undefined`
+> falls through to the normal slot flow rather than locking every patient out. The
+> predicate `isCallOnlyVisitType()` is the single shared place that decides this — no
+> other business logic was added to the frontend. No hardcoded fallback phone number:
+> when `facility_phone_no` is absent the number line is simply omitted.
+>
+> **Files/areas:** new `client/src/components/CallToSchedulePanel.tsx` (exports
+> `CallToSchedulePanel` + `SchedulingAssistanceCard`; the panel takes `phone`, `location`
+> and an overridable `title`; tokens only — `border-primary/30`,
+> `text-primary`, `font-heading`, no hardcoded hex); `client/src/components/
+> SelectPreauthorizationModal.tsx` (typed `allow_visit_type`, `facility_phone_no`,
+> `schedule` on `PreauthRecord`; new exported `isCallOnlyVisitType`);
+> `client/src/components/ScheduleAppointmentModal.tsx` (`callOnly` derivation,
+> `loadBlock` guard + dep, header/banner/body/footer branches);
+> `client/src/pages/Appointments.tsx` (`AppointmentDetail` gains both fields,
+> `openRescheduleModal` skips `initRescheduleSlots`/`loadRescheduleMonthWindow`,
+> `rescheduleCallOnly` derivation, modal body + footer branches);
+> `SCHEDULE_FLOW_BACKEND_REQUIREMENTS.md` (BR-13).
+>
+> **Auth / case-scoping / patient-data:** None changed. No new API calls were added and
+> no endpoint signatures changed; `get-approved-preauth` keeps its automatic
+> `?case_id=` injection (it is not in `CASE_ID_EXEMPT_ENDPOINTS`). Net effect on traffic
+> is a reduction — slot requests are suppressed for call-only visit types. The facility
+> phone number is rendered as a `tel:` link (digits stripped for the `href` only; the
+> visible label is the backend's string verbatim). `tsc --noEmit` and `vite build` both
+> pass clean.
+
+---
+
 ## 2026-07-27
 
 ### Hide the per-card "Cancel" appointment button (UI only)

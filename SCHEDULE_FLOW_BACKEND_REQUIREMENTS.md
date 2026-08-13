@@ -633,6 +633,98 @@ Once shipped, the existing frontend activates automatically (no code change).
 
 ---
 
+# BR-13 — `get-appointment/{id}` must return `allow_visit_type` + `facility_phone_no`
+
+**Feature:** Block booking/rescheduling for call-only visit types.
+
+**Issue:** `GET get-approved-preauth` now returns, per record, `allow_visit_type`
+(`1` = the patient may self-book, `0` = they must phone the facility) and
+`facility_phone_no` (pre-formatted, e.g. `"(214) 941-4550"`). The **Schedule Your Remaining
+Appointments** modal is fully wired to these and works today, because it receives the
+preauth record directly.
+
+The **Reschedule** modal cannot be: its only data sources are the appointments list and
+`GET get-appointment/{id}` → neither returns either field. So the frontend cannot tell
+whether an existing appointment's visit type is self-serviceable, nor which number to show.
+
+Deriving it client-side from `get-approved-preauth` (matching on `ma_id`) is **not viable**:
+that endpoint is filtered to `status = "Approved" AND no_sessions > 0`, so an appointment
+whose preauth is exhausted or closed returns no match, and the frontend would have to invent
+a fallback rule — exactly the business logic that must stay in the backend.
+
+**Required Backend Changes:** Resolve the preauth (`ma_id`) behind the appointment and
+surface its visit-type booking flag + facility phone on the appointment detail response.
+
+**Required API Changes:** `GET get-appointment/{id}`
+
+**Required Response Fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `allow_visit_type` | int (`0` \| `1`) | Must never be `null` — see below |
+| `facility_phone_no` | string | Pre-formatted, e.g. `"(214) 941-4550"` |
+
+**Also — normalise `allow_visit_type` on `get-approved-preauth`.** It currently returns
+`null` on some records (observed on `ma_id 186341`, San Antonio). The spec defines only `0`
+and `1`. The frontend currently treats **only an explicit `0`** as blocking (`null` falls
+through to the normal slot flow) so that an unpopulated field can't lock every patient out —
+but that is a defensive read, not a rule the frontend should own. Please always return `0`
+or `1`.
+
+**Reason:** This logic should be implemented in the backend so it can be shared by both the
+Patient Portal web application and the future mobile application.
+
+**Frontend status:** The reschedule gate is already written and dormant — it reads
+`appointmentDetail.allow_visit_type` / `.facility_phone_no`. Once the backend returns them
+it activates automatically, **no frontend code change required**.
+
+---
+
+# BR-14 — `get-approved-preauth` must return a visit-type DISPLAY NAME
+
+**Feature:** Restricted preauthorization card in the "Select Preauthorization" modal.
+
+**Issue:** The card has been reduced to show only **Visit type** and the authorized date
+range (Service, Referring physician and Company were removed). The visit type is now the
+primary piece of information on the card — but the API returns only the **code**:
+
+```
+"service": "PT",  "pa_req": "adj",  "visit_type": "adj"
+```
+
+Patients need the descriptive name (`"PT"` → **"Physical Therapy"**). Codes like `adj`,
+`OT`, `PT` are internal shorthand and are not meaningful to a patient.
+
+The frontend **will not** map codes to names itself. The mapping exists in
+`get-department-speciality-with-physician` (`visit_types[].visittype_code` →
+`visittype_name`), but resolving it client-side would mean an extra API call per card plus
+a field-mapping table in the UI — exactly the business logic that must stay in the backend
+so the future mobile app shares it.
+
+**Required Backend Changes:** Resolve the visit-type code to its display name when building
+the preauth record.
+
+**Required API Changes:** `GET get-approved-preauth`
+
+**Required Response Fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `visit_type_name` | string \| null | Display name for `visit_type`, e.g. `"Physical Therapy"` for `"PT"` |
+
+**Reason:** This logic should be implemented in the backend so it can be shared by both the
+Patient Portal web application and the future mobile application.
+
+**Target display format:** `Visit Type: Physical Therapy (PT)` — the display name followed
+by the code in parentheses.
+
+**Frontend status:** Already wired — the card renders `"{visit_type_name} ({visit_type})"`
+when the name is present and degrades to the bare code (`PT`) when it is not, so it switches
+to the full format automatically once the backend returns `visit_type_name`. **No frontend
+code change required.**
+
+---
+
 ## Summary of blockers (quick list for triage)
 
 | ID | Blocker | Priority |
@@ -649,6 +741,8 @@ Once shipped, the existing frontend activates automatically (no code change).
 | BR-10 | `get-time-slots-date-range` can't identify the patient's own booking / same-visit-type-per-day (need `existing_appointment` + `booking_locked`; depends on BR-3 `patient_id`) | Medium |
 | BR-11 | `get-time-slots-date-range` exposes no capacity or group-window data (need `allow_multiple`/`capacity`/`remaining` + window `start`/`end`) | Medium |
 | BR-12 | Reschedule calendar has no per-date holiday/provider-leave + reason across a month (need a range availability-status endpoint, or extend BR-9) for red highlighting + tooltip | Medium |
+| BR-13 | `get-appointment/{id}` returns no `allow_visit_type` / `facility_phone_no`, so the Reschedule modal can't gate call-only visit types (Schedule modal already works); also `get-approved-preauth` returns `allow_visit_type: null` on some records instead of `0`/`1` | High |
+| BR-14 | `get-approved-preauth` returns only the visit-type CODE (`"PT"`, `"adj"`); the restricted preauth card needs a patient-readable `visit_type_name` (`"Physical Therapy"`) | Medium |
 
 **Reason (applies to all items):** This logic and these data mappings must be implemented in the backend so they can be shared by both the Patient Portal web application and the future mobile application. The frontend will not implement workarounds, assumptions, or defaults.
 

@@ -15,7 +15,9 @@ import { getActivePatientId } from "@/lib/caseContext";
 import { getApiErrorMessage } from "@/lib/apiError";
 import { cn } from "@/lib/utils";
 import type { PreauthRecord } from "@/components/SelectPreauthorizationModal";
+import { isCallOnlyVisitType } from "@/components/SelectPreauthorizationModal";
 import SlotTooShortModal from "@/components/SlotTooShortModal";
+import { CallToSchedulePanel, SchedulingAssistanceCard } from "@/components/CallToSchedulePanel";
 
 interface Department {
   id: number | string;
@@ -173,6 +175,10 @@ interface DaySelection {
 
 export default function ScheduleAppointmentModal({ open, onClose, preauth, onScheduled }: Props) {
   const { user } = useAuth();
+  // Backend says this preauth's visit type can't be self-booked — the patient must
+  // phone the facility. Replaces the whole day/slot picker with the call panel and
+  // suppresses the time-slot fetches entirely.
+  const callOnly = isCallOnlyVisitType(preauth?.allow_visit_type);
   // One confirmed appointment per day, keyed by date (YYYY-MM-DD).
   const [selectedByDay, setSelectedByDay] = useState<Record<string, DaySelection>>({});
   const [page, setPage] = useState(1);
@@ -461,6 +467,8 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
   const loadBlock = useCallback(
     async (blockIndex: number, background = false) => {
       if (blockIndex < 0) return;
+      // Call-only visit type: no slots are offered, so skip the range fetch entirely.
+      if (callOnly) return;
       if (!selectedLocation || !selectedPhysicianId || !scheduleRangeStart || !svcDateEnd || !preauthCaseId) return;
       if (blockCacheRef.current[blockIndex] || inFlightBlocksRef.current.has(blockIndex)) return;
       const winStart = addDays(scheduleRangeStart, BLOCK_WINDOW_DAYS * blockIndex);
@@ -501,7 +509,7 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
         inFlightBlocksRef.current.delete(blockIndex);
       }
     },
-    [selectedLocation, selectedPhysicianId, scheduleRangeStart, svcDateEnd, preauthCaseId, selectedVisitType, selectedSpeciality],
+    [callOnly, selectedLocation, selectedPhysicianId, scheduleRangeStart, svcDateEnd, preauthCaseId, selectedVisitType, selectedSpeciality],
   );
 
   // Reset the cache + selections whenever the query changes (location / provider /
@@ -834,7 +842,7 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
                 <DialogTitle className="text-lg font-semibold leading-tight text-left">
                   Schedule Your Remaining Appointments
                 </DialogTitle>
-                {!isModalLoading && !sessionsBlockMessage && (
+                {!isModalLoading && !sessionsBlockMessage && !callOnly && (
                   <p className="text-sm text-muted-foreground text-left">
                     {sessionLimit > 0
                       ? `Choose up to ${sessionLimit} appointment${sessionLimit === 1 ? "" : "s"}. Only available times are shown.`
@@ -906,15 +914,28 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
             );
           })()}
 
-          {/* Session-limit reached banner */}
-          {sessionLimit === 0 && (
+          {/* Session-limit reached banner (irrelevant when booking is by phone) */}
+          {sessionLimit === 0 && !callOnly && (
             <div className="flex items-center gap-2 rounded-md px-3 py-2 text-xs text-amber-700 bg-amber-50 border border-amber-200">
               <AlertCircle className="h-4 w-4 flex-shrink-0" />
               No remaining authorized sessions to schedule.
             </div>
           )}
 
-          {/* ── Day picker + times | Your appointments ── */}
+          {/* ── Call-only visit type: the slot picker is replaced by the facility's
+                 phone number; the sidebar becomes the scheduling-assistance note. ── */}
+          {callOnly ? (
+            <div className="flex flex-col lg:flex-row gap-5">
+              <CallToSchedulePanel
+                phone={preauth?.facility_phone_no}
+                location={selectedLocationLabel || preauth?.medauth_facility}
+                className="flex-1 min-w-0"
+              />
+              <SchedulingAssistanceCard />
+            </div>
+          ) : (
+
+          /* ── Day picker + times | Your appointments ── */
           <div className="flex flex-col lg:flex-row gap-5">
 
             {/* Left: choose a day + available times */}
@@ -1127,6 +1148,7 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
               </div>
             </div>
           </div>
+          )}
         </div>
         )}
 
@@ -1135,7 +1157,7 @@ export default function ScheduleAppointmentModal({ open, onClose, preauth, onSch
           <Button variant="outline" onClick={onClose} disabled={submitting}>
             Close
           </Button>
-          {!sessionsBlockMessage && (
+          {!sessionsBlockMessage && !callOnly && (
             <Button
               className="bg-primary hover:bg-primary/90"
               onClick={handleSchedule}

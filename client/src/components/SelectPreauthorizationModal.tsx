@@ -26,6 +26,13 @@ export interface PreauthRecord {
   pa_req?: string | null;
   pa_resp?: string | null;
   visit_type?: string | null;
+  /**
+   * Human-readable visit-type name (e.g. "Physical Therapy") for `visit_type`'s code
+   * ("PT"). Not yet returned by the API — see BR-14 in
+   * SCHEDULE_FLOW_BACKEND_REQUIREMENTS.md. The preauth card falls back to the raw code
+   * until the backend supplies it; the frontend does not map codes to names itself.
+   */
+  visit_type_name?: string | null;
   referred_by_physician?: string | null;
   referred_company_name?: string | null;
   referred_physician_code?: string | null;
@@ -54,6 +61,20 @@ export interface PreauthRecord {
   no_sessions?: number | null;         // total approved sessions
   sessions_remaining?: number | null;  // sessions still available (backend-computed)
   sessions_completed?: number | null;  // not currently returned; preferred when present
+  /**
+   * Backend flag deciding whether this preauth's visit type may be booked by the
+   * patient: 1 = self-service scheduling allowed, 0 = the patient must phone the
+   * facility. The API owns the rule; the frontend only reads it. May currently come
+   * back `null` — see `isCallOnlyVisitType` for how that is treated.
+   */
+  allow_visit_type?: number | null;
+  /**
+   * The facility's phone number, already formatted by the backend
+   * (e.g. "(214) 941-4550"). Shown when `allow_visit_type` is 0.
+   */
+  facility_phone_no?: string | null;
+  /** Backend-owned scheduling counter returned by the API; not read by the UI yet. */
+  schedule?: number | null;
   /**
    * The patient's OWN appointments for THIS preauth, from `GET /get-approved-preauth`.
    * Patient-scoped (unlike the anonymized booked slots in get-time-slots-date-range),
@@ -84,6 +105,16 @@ export interface PreauthAppointment {
  */
 export const isPreauthReady = (p: PreauthRecord): boolean =>
   p.is_ready_for_scheduling ?? (p.is_details_missing !== true);
+
+/**
+ * Reads the backend's `allow_visit_type` flag: true when the visit type may NOT be
+ * self-booked and the patient has to phone the facility instead. Only an explicit 0
+ * blocks — `null`/`undefined` (the backend does not always populate the field yet)
+ * falls through to the normal slot flow rather than locking every patient out.
+ * This is a field read, not a business rule; the API owns the decision.
+ */
+export const isCallOnlyVisitType = (allowVisitType: unknown): boolean =>
+  allowVisitType !== null && allowVisitType !== undefined && Number(allowVisitType) === 0;
 
 /** The three display/interaction states of a preauth card. */
 export type PreauthState = "ready" | "under-review" | "activation-required";
@@ -143,6 +174,16 @@ interface Props {
 const dash = (v: unknown) => {
   const s = v == null ? "" : String(v).trim();
   return s === "" ? "—" : s;
+};
+
+// Visit type shown as "Physical Therapy (PT)" — the backend's display name followed by
+// its code. `visit_type_name` is not returned yet (BR-14), so until it is this degrades to
+// the bare code. Purely presentational: no code→name mapping happens on the frontend.
+const visitTypeLabel = (p: PreauthRecord) => {
+  const code = p.visit_type == null ? "" : String(p.visit_type).trim();
+  const name = p.visit_type_name == null ? "" : String(p.visit_type_name).trim();
+  if (name && code) return `${name} (${code})`;
+  return name || code || "—";
 };
 
 // Display-only formatting: the record keeps the backend's YYYY-MM-DD values.
@@ -256,17 +297,12 @@ export default function SelectPreauthorizationModal({ open, onClose, preauths, o
                       </span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm text-muted-foreground">
+                      {/* Deliberately minimal: only the visit type and the authorized
+                          date range are shown. Service, referring physician and company
+                          were removed to restrict what the portal exposes on this card. */}
                       <div>
-                        <span className="text-foreground/70">Service / Visit type: </span>
-                        {dash(p.service)}{p.pa_req ? ` / ${p.pa_req}` : ""}
-                      </div>
-                      <div>
-                        <span className="text-foreground/70">Referring physician: </span>
-                        {dash(p.referred_by_physician)}
-                      </div>
-                      <div>
-                        <span className="text-foreground/70">Company: </span>
-                        {dash(p.referred_company_name)}
+                        <span className="text-foreground/70">Visit Type: </span>
+                        {visitTypeLabel(p)}
                       </div>
                       <div className="flex items-center gap-1.5">
                         <CalendarDays className="h-3.5 w-3.5 shrink-0" />

@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import PageLoader from "@/components/PageLoader";
 import ScheduleAppointmentModal from "@/components/ScheduleAppointmentModal";
-import SelectPreauthorizationModal, { type PreauthRecord, preauthState } from "@/components/SelectPreauthorizationModal";
+import SelectPreauthorizationModal, { type PreauthRecord, preauthState, isCallOnlyVisitType } from "@/components/SelectPreauthorizationModal";
+import { CallToSchedulePanel } from "@/components/CallToSchedulePanel";
 import ActivationRequiredModal from "@/components/ActivationRequiredModal";
 import BookingTooSoonModal from "@/components/BookingTooSoonModal";
 import { useAuth } from "@/contexts/AuthContext";
@@ -255,6 +256,16 @@ interface AppointmentDetail {
   svc_date_start?: string | null;
   svc_date_end?: string | null;
   ext_date?: string | null;
+  /**
+   * Backend flag mirrored from the appointment's preauth: 1 = the patient may
+   * reschedule from the portal, 0 = they must phone the facility. Same semantics as
+   * `allow_visit_type` on `get-approved-preauth`. Not yet returned by
+   * `get-appointment/{id}` — see SCHEDULE_FLOW_BACKEND_REQUIREMENTS.md (BR-13); the
+   * reschedule gate stays inert until the backend supplies it.
+   */
+  allow_visit_type?: number | null;
+  /** Facility phone, pre-formatted by the backend, e.g. "(214) 941-4550". */
+  facility_phone_no?: string | null;
 }
 
 interface RescheduleReason {
@@ -563,6 +574,11 @@ export default function Appointments() {
     return rescheduleDate !== curDate || rescheduleStartTime !== curStart;
   }, [appointmentDetail, rescheduleDate, rescheduleStartTime]);
 
+  // Backend says this appointment's visit type can't be rescheduled from the portal —
+  // the patient has to phone the facility. Replaces the date/slot/reason form with the
+  // call panel and hides the submit button.
+  const rescheduleCallOnly = isCallOnlyVisitType(appointmentDetail?.allow_visit_type);
+
   // Load the given month's availability with a SINGLE `get-time-slots-date-range`
   // call (not per-day — that endpoint rate-limits at ~30 calls/month, causing the
   // 429s + slow calendar). Populates `rescheduleDayInfo` so the calendar can disable
@@ -778,13 +794,17 @@ export default function Appointments() {
           : (apptRes.data as AppointmentDetail | undefined);
         if (detail) {
           setAppointmentDetail(detail);
-          // Load the real start/end time slots for the appointment's own date.
-          await initRescheduleSlots(detail);
-          // Paint the appointment's month (+ neighbours, so navigation is instant):
-          // disable non-working days, red-highlight holidays / provider-leave.
-          const apptDate = parse(formatDateInput(detail.attend_date), "yyyy-MM-dd", new Date());
-          if (isValid(apptDate)) {
-            loadRescheduleMonthWindow(detail, apptDate.getFullYear(), apptDate.getMonth());
+          // Call-only visit type: the modal shows the facility's phone number instead
+          // of a picker, so skip both availability fetches entirely.
+          if (!isCallOnlyVisitType(detail.allow_visit_type)) {
+            // Load the real start/end time slots for the appointment's own date.
+            await initRescheduleSlots(detail);
+            // Paint the appointment's month (+ neighbours, so navigation is instant):
+            // disable non-working days, red-highlight holidays / provider-leave.
+            const apptDate = parse(formatDateInput(detail.attend_date), "yyyy-MM-dd", new Date());
+            if (isValid(apptDate)) {
+              loadRescheduleMonthWindow(detail, apptDate.getFullYear(), apptDate.getMonth());
+            }
           }
         } else {
           toast.error(apptRes.message || apptRes.error || "Failed to load appointment details.");
@@ -1454,6 +1474,16 @@ export default function Appointments() {
                     );
                   })()}
 
+                  {/* Call-only visit type: no date picker, slots or reason — just the
+                      facility's phone number. The context bar above stays visible. */}
+                  {rescheduleCallOnly ? (
+                    <CallToSchedulePanel
+                      phone={appointmentDetail?.facility_phone_no}
+                      location={appointmentDetail?.department || rescheduleAppointment.department}
+                    />
+                  ) : (
+                  <>
+
                   {/* Row 1: Date + Current/New summary side by side */}
                   <div className="flex flex-col sm:flex-row gap-5">
                     <div className="flex flex-col gap-2 sm:w-56 flex-shrink-0">
@@ -1751,6 +1781,8 @@ export default function Appointments() {
                       )}
                     </div>
                   )}
+                  </>
+                  )}
 
                 </>
               )}
@@ -1758,7 +1790,7 @@ export default function Appointments() {
           )}
 
           {/* Fixed footer with a centered Re-Schedule button */}
-          {rescheduleAppointment && !isModalLoading && (
+          {rescheduleAppointment && !isModalLoading && !rescheduleCallOnly && (
             <div className="flex items-center justify-center pt-4 border-t border-border flex-shrink-0">
               <Button
                 className="bg-primary hover:bg-primary/90"
